@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.env
+*.log
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+.npm/
+out/
+dist/
+
+# Docker
+*.dockerignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Secrets
+*.pem
+*.key
+*.cert
+secrets/
+
+# Database
+*.sqlite
+*.db
+
+# Coverage
+coverage.xml
+coverage/
+
+# Alembic
+infrastructure/database/migrations/versions/*.py
+!infrastructure/database/migrations/versions/001_initial.py

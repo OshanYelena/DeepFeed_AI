@@ -1,0 +1,200 @@
+# DeepFeed AI - Docker Compose
+# Run from: deployment/docker/
+#   docker-compose up -d
+# All paths are relative to THIS file's location (deployment/docker/)
+
+services:
+  # ── Database ────────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: deepfeed_postgres
+    environment:
+      POSTGRES_DB: deepfeed
+      POSTGRES_USER: deepfeed
+      POSTGRES_PASSWORD: deepfeed
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deepfeed -d deepfeed"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - deepfeed_net
+
+  # ── Message Queue ────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: deepfeed_rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: deepfeed
+      RABBITMQ_DEFAULT_PASS: deepfeed
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "5672:5672"
+      - "15672:15672"   # Management UI: http://localhost:15672
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - deepfeed_net
+
+  # ── Backend API ──────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ../../apps/backend
+      dockerfile: Dockerfile
+    container_name: deepfeed_backend
+    env_file:
+      - ../../apps/backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://deepfeed:deepfeed@postgres:5432/deepfeed
+      DATABASE_SYNC_URL: postgresql://deepfeed:deepfeed@postgres:5432/deepfeed
+      CELERY_BROKER_URL: amqp://deepfeed:deepfeed@rabbitmq:5672/
+      RABBITMQ_URL: amqp://deepfeed:deepfeed@rabbitmq:5672/
+      APP_ENV: local
+      APP_DEBUG: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - deepfeed_net
+    volumes:
+      - ../../apps/backend:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ── Celery Worker ────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ../../apps/backend
+      dockerfile: Dockerfile
+    container_name: deepfeed_worker
+    env_file:
+      - ../../apps/backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://deepfeed:deepfeed@postgres:5432/deepfeed
+      DATABASE_SYNC_URL: postgresql://deepfeed:deepfeed@postgres:5432/deepfeed
+      CELERY_BROKER_URL: amqp://deepfeed:deepfeed@rabbitmq:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - deepfeed_net
+    volumes:
+      - ../../apps/backend:/app
+    command: celery -A workers.celery_app worker --loglevel=info --concurrency=4 -Q default,discovery,processing,ranking,adaptation
+
+  # ── Celery Beat Scheduler ────────────────────────────────────────────────────
+  beat:
+    build:
+      context: ../../apps/backend
+      dockerfile: Dockerfile
+    container_name: deepfeed_beat
+    env_file:
+      - ../../apps/backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://deepfeed:deepfeed@postgres:5432/deepfeed
+      CELERY_BROKER_URL: amqp://deepfeed:deepfeed@rabbitmq:5672/
+    depends_on:
+      - worker
+    networks:
+      - deepfeed_net
+    volumes:
+      - ../../apps/backend:/app
+    command: celery -A workers.celery_app beat --loglevel=info
+
+  # ── Frontend ──────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ../../apps/frontend
+      dockerfile: Dockerfile
+    container_name: deepfeed_frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - deepfeed_net
+
+  # ── Nginx Reverse Proxy ──────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: deepfeed_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ../../deployment/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - deepfeed_net
+
+  # ── Prometheus ────────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: deepfeed_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../../deployment/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../deployment/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - deepfeed_net
+
+  # ── Grafana ───────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: deepfeed_grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: deepfeed
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../../deployment/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../deployment/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - deepfeed_net
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  deepfeed_net:
+    driver: bridge

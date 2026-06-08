@@ -1,0 +1,42 @@
+groups:
+  - name: deepfeed_alerts
+    rules:
+      # TDS §16.6: Discovery Failure Rate > 20%
+      - alert: DiscoveryFailureRateHigh
+        expr: rate(deepfeed_provider_failures_total[5m]) / rate(deepfeed_discovery_jobs_total[5m]) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Discovery failure rate above 20%"
+          description: "Provider failure rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      # TDS §16.6: LLM Failure Rate > 30%
+      - alert: LLMFailureRateHigh
+        expr: rate(deepfeed_llm_failures_total[5m]) / rate(deepfeed_llm_requests_total[5m]) > 0.30
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LLM failure rate above 30%"
+          description: "LLM failure rate is {{ $value | humanizePercentage }} for provider {{ $labels.provider }}."
+
+      # TDS §16.6: Recommendation Generation Failure
+      - alert: RecommendationsNotGenerating
+        expr: increase(deepfeed_recommendations_generated_total[1h]) == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No recommendations generated in the last hour"
+          description: "The recommendation engine may be stalled."
+
+      # API high error rate
+      - alert: APIHighErrorRate
+        expr: rate(deepfeed_http_requests_total{status=~"5.."}[5m]) / rate(deepfeed_http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High API 5xx error rate"
+          description: "API error rate is {{ $value | humanizePercentage }}."
