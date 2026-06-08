@@ -100,46 +100,9 @@
 
 DeepFeed AI follows a **Modular Monolith + Event-Driven Processing + Agentic Adaptation Layer** architecture.
 
-```
-╔══════════════════════════════════════════════════════════════════════════╗
-║                         DeepFeed AI Platform                             ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║                                                                          ║
-║   ┌─────────────────────────────────────────────────────────────────┐   ║
-║   │                      Next.js 14 Frontend                        │   ║
-║   │           TypeScript · TailwindCSS · TanStack Query             │   ║
-║   └──────────────────────────┬──────────────────────────────────────┘   ║
-║                              │ HTTPS / REST                              ║
-║                              ▼                                           ║
-║   ┌─────────────────────────────────────────────────────────────────┐   ║
-║   │                    Nginx Reverse Proxy                          │   ║
-║   └──────────────────────────┬──────────────────────────────────────┘   ║
-║                              │                                           ║
-║                              ▼                                           ║
-║   ┌─────────────────────────────────────────────────────────────────┐   ║
-║   │                   FastAPI Application Core                      │   ║
-║   │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │   ║
-║   │  │   Auth   │  │ Discovery│  │  Reco.   │  │   Agentic     │  │   ║
-║   │  │ Module   │  │ Pipeline │  │  Engine  │  │  Adaptation   │  │   ║
-║   │  └──────────┘  └──────────┘  └──────────┘  └───────────────┘  │   ║
-║   │  ┌──────────────────────────────────────────────────────────┐  │   ║
-║   │  │              Application Service Layer                    │  │   ║
-║   │  └──────────────────────────────────────────────────────────┘  │   ║
-║   └───────┬────────────────────┬──────────────────────┬────────────┘   ║
-║           │                    │                      │                  ║
-║           ▼                    ▼                      ▼                  ║
-║   ┌──────────────┐   ┌──────────────────┐   ┌──────────────────────┐   ║
-║   │ PostgreSQL 16│   │  Celery Workers  │   │  Research Agent      │   ║
-║   │  + pgvector  │   │  + RabbitMQ      │   │  Microservice        │   ║
-║   │              │   │                  │   │  (LangGraph)         │   ║
-║   └──────────────┘   └──────────────────┘   └──────────────────────┘   ║
-║                                                                          ║
-║   ┌──────────────────────────────────────────────────────────────────┐  ║
-║   │         Observability Stack                                      │  ║
-║   │   Prometheus · Grafana · OpenTelemetry · Structlog               │  ║
-║   └──────────────────────────────────────────────────────────────────┘  ║
-╚══════════════════════════════════════════════════════════════════════════╝
-```
+<div align="center">
+<img src="./docs/architecture.svg" alt="DeepFeed AI System Architecture" width="100%"/>
+</div>
 
 ### Event Flow
 
@@ -234,6 +197,9 @@ deepfeed-ai/
 │   │   ├── evaluation/            # Research eval framework (V6.9)
 │   │   └── jobs/                  # Background job execution (V6.7/6.8)
 │   └── tests/                     # 111 passing tests
+│
+├── 📁 docs/
+│   └── architecture.svg           # System architecture diagram
 │
 ├── 📁 deployment/
 │   └── docker/
