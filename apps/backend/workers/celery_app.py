@@ -17,6 +17,10 @@ celery_app = Celery(
     "deepfeed",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
+    # Without this, the worker process never imports workers/tasks.py, so
+    # none of the @celery_app.task decorators in it ever run and nothing
+    # gets registered — `celery inspect registered` would report empty.
+    include=["workers.tasks"],
 )
 
 celery_app.conf.update(
@@ -30,11 +34,23 @@ celery_app.conf.update(
     task_max_retries=3,
     task_default_retry_delay=30,  # 30 seconds initial retry
     worker_prefetch_multiplier=1,
+    # Celery's built-in default queue is literally named "celery", which the
+    # worker never listens on (-Q default,discovery,processing,ranking,adaptation).
+    # These task_routes patterns previously used dotted-namespace globs
+    # ("workers.tasks.discovery.*") that don't match any real task name
+    # ("workers.tasks.run_discovery_task"), so every task fell through to
+    # "celery" and sat there unconsumed. Route by the real task names, and
+    # give anything unmatched an explicit home on a queue the worker actually
+    # drains, instead of Celery's unconsumed default.
+    task_default_queue="default",
     task_routes={
-        "workers.tasks.discovery.*": {"queue": "discovery"},
-        "workers.tasks.processing.*": {"queue": "processing"},
-        "workers.tasks.ranking.*": {"queue": "ranking"},
-        "workers.tasks.adaptation.*": {"queue": "adaptation"},
+        "workers.tasks.run_discovery_task": {"queue": "discovery"},
+        "workers.tasks.run_personalized_discovery_task": {"queue": "discovery"},
+        "workers.tasks.run_processing_task": {"queue": "processing"},
+        "workers.tasks.run_summarization_task": {"queue": "processing"},
+        "workers.tasks.run_ranking_task": {"queue": "ranking"},
+        "workers.tasks.run_adaptation_task": {"queue": "adaptation"},
+        "workers.tasks.run_reflection_task": {"queue": "adaptation"},
     },
 )
 
