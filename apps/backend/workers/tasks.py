@@ -7,7 +7,7 @@ Idempotent by design (TDS §9.7).
 import asyncio
 import uuid
 from celery import shared_task
-from celery.exceptions import MaxRetriesExceededError
+from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 
 from workers.celery_app import celery_app
 from logger import get_logger
@@ -77,6 +77,13 @@ def run_discovery_task(self, source_id: str = None, trace_id: str = None):
     bind=True,
     max_retries=2,
     default_retry_delay=30,
+    # Discovery + processing (real HTTP fetches per item) + ranking chained
+    # into one task has no natural upper bound — a large backlog or a run
+    # of slow/hanging feeds can otherwise leave this "running" forever from
+    # the UI's point of view. Soft limit lets us mark the run failed
+    # cleanly; hard limit is the backstop if that handler itself hangs.
+    soft_time_limit=360,
+    time_limit=420,
 )
 def run_personalized_discovery_task(
     self,
@@ -134,7 +141,8 @@ def run_personalized_discovery_task(
         from infrastructure.llm.providers import get_llm_provider
         llm = get_llm_provider("low")
         total = 0
-        for _ in range(15):  # cap: 15 * batch_size(20) = 300 items per run
+        for _ in range(5):  # cap: 5 * batch_size(20) = 100 items per run, to
+                             # stay well under the task's soft_time_limit
             async with await _get_db_session() as db:
                 service = ContentProcessingService(db, llm)
                 count = await service.process_pending(batch_size=20, trace_id=trace_id)
@@ -186,6 +194,23 @@ def run_personalized_discovery_task(
             "processed_items": processed_count,
             "recommendations": rec_count,
         }
+    except SoftTimeLimitExceeded:
+        # Don't retry a timeout — that just repeats the same slow work and
+        # hits the limit again. Mark it failed immediately so the run row
+        # (and the frontend polling it) doesn't sit at "running" forever.
+        logger.error(
+            "personalized_discovery_timed_out",
+            task_id=task_id,
+            user_id=user_id,
+            trace_id=trace_id,
+        )
+        _run_async(_mark_terminal(
+            "failed",
+            error="Search took too long and was stopped. Try again — "
+                  "processing works through a queue, so a retry picks up "
+                  "less backlog.",
+        ))
+        return {"status": "failed", "error": "timed_out"}
     except Exception as exc:
         logger.error(
             "personalized_discovery_failed",

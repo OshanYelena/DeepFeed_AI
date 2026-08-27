@@ -47,6 +47,14 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Celery task's own time_limit (420s) plus a buffer. A run stuck in
+# pending/running past this point means the worker died mid-task (a
+# restart, an OOM kill) rather than the task's own except block ever
+# running — nothing will ever mark that row terminal on its own, and the
+# frontend would poll it forever. Self-heal here instead.
+STALE_RUN_THRESHOLD_SECONDS = 600
+
+
 class DiscoveryTriggerService:
     """API-side coordinator for manual discovery triggers."""
 
@@ -124,6 +132,25 @@ class DiscoveryTriggerService:
             queries = payload
         return [q for q in queries if isinstance(q, str) and q.strip()]
 
+    async def _reap_if_stale(self, run: Optional[DiscoveryRun]) -> Optional[DiscoveryRun]:
+        """Flip a run stuck past STALE_RUN_THRESHOLD_SECONDS to 'failed' so
+        it doesn't sit as 'active' forever. See threshold comment above."""
+        if run is None or run.status not in ("pending", "running"):
+            return run
+        age_seconds = (_now_utc() - run.started_at).total_seconds()
+        if age_seconds < STALE_RUN_THRESHOLD_SECONDS:
+            return run
+        run.status = "failed"
+        run.error_message = "Lost contact with the background worker. Try again."
+        run.completed_at = _now_utc()
+        await self._db.commit()
+        logger.warning(
+            "discovery_run_reaped_as_stale",
+            run_id=str(run.id),
+            age_seconds=int(age_seconds),
+        )
+        return run
+
     # ── Public API ───────────────────────────────────────────────────────────
 
     async def get_status(self, user_id: uuid.UUID) -> dict:
@@ -154,6 +181,9 @@ class DiscoveryTriggerService:
             .limit(1)
         )
         active = (await self._db.execute(active_stmt)).scalar_one_or_none()
+        active = await self._reap_if_stale(active)
+        if active is not None and active.status not in ("pending", "running"):
+            active = None  # just got reaped — no longer "active"
 
         # Cooldown
         seconds_since = await self._seconds_since_last_run(user_id)
@@ -277,7 +307,8 @@ class DiscoveryTriggerService:
             .where(DiscoveryRun.user_id == user_id)
         )
         result = await self._db.execute(stmt)
-        return result.scalar_one_or_none()
+        run = result.scalar_one_or_none()
+        return await self._reap_if_stale(run)
 
 
 def _serialize_run(run: Optional[DiscoveryRun]) -> Optional[dict]:
