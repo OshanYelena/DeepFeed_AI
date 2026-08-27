@@ -330,3 +330,44 @@ class ReflectionReport(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), default=now_utc, nullable=False)
 
     user: Mapped["User"] = relationship("User", back_populates="reflection_reports")
+
+
+# ── Discovery Runs ────────────────────────────────────────────────────────────
+# One row per *manual* discovery trigger. The hourly cron is not recorded
+# here — it's tracked via Celery's own task log. We only need this table
+# to enforce the per-user daily quota and surface "what just happened" to
+# the UI (last run time, item count, currently-running task).
+class DiscoveryRun(Base):
+    __tablename__ = "discovery_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Celery task id — opaque string. Indexed because the status endpoint
+    # looks runs up by this.
+    task_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # 'pending' | 'running' | 'completed' | 'failed'
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    # 'personalized' | 'global' — leaves room for the global variant later.
+    trigger_type: Mapped[str] = mapped_column(String(32), nullable=False, default="personalized")
+    # Queries we actually sent into discovery, persisted for debugging.
+    search_queries: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Number of net-new ContentItems created by this run. Populated on completion.
+    new_items_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=now_utc, nullable=False
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        # Quota check: "how many runs has this user started in the last 24h?"
+        # Range scan on (user_id, started_at) is the right shape.
+        Index("idx_discovery_runs_user_started", "user_id", "started_at"),
+        Index("idx_discovery_runs_status", "status"),
+    )

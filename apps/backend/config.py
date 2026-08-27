@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     adaptation_schedule_cron: str = "0 2 * * *"
     reflection_schedule_cron: str = "0 3 * * *"
 
+    # Manual discovery (on-demand "Discover Now" button)
+    # 10/day matches the cron of every hour, but lets impatient users burst.
+    discovery_manual_daily_limit: int = 10
+    # Seconds between two clicks by the same user. Stops accidental double-clicks
+    # from spawning duplicate runs while still letting users retry within a session.
+    discovery_manual_cooldown_seconds: int = 60
+    # Cron expression for scheduled discovery — used by the status endpoint to
+    # compute "next automatic run." Keep in sync with celery beat_schedule.
+    discovery_schedule_cron: str = "0 * * * *"
+
 
 @lru_cache()
 def get_settings() -> Settings:

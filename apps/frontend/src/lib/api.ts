@@ -197,6 +197,48 @@ export const agentAPI = {
     api().get<APIResponse<ReflectionReport>>("/agent/reflection/latest"),
 };
 
+// ── Content Discovery API ("Discover Now" button) ──────────────────────────────
+export interface DiscoveryRun {
+  id: string;
+  task_id: string;
+  status: "pending" | "running" | "completed" | "failed";
+  trigger_type: string;
+  new_items_count: number | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface DiscoveryStatus {
+  daily: { used: number; limit: number; remaining: number; reset_at: string | null };
+  cooldown_seconds_remaining: number;
+  next_scheduled_at: string | null;
+  last_run: DiscoveryRun | null;
+  active_run: DiscoveryRun | null;
+}
+
+// The backend returns 200 with either {data: ...} or {error: {code, message}}
+// for this endpoint's expected failure modes (quota/cooldown/no-plan) rather
+// than an HTTP error status, so callers must check for `error` themselves.
+export interface DiscoveryEnvelope<T> {
+  trace_id: string;
+  data?: T;
+  error?: { code: string; message: string; details?: Record<string, unknown> };
+}
+
+export const contentAPI = {
+  getStatus: () =>
+    api().get<DiscoveryEnvelope<DiscoveryStatus>>("/content/discover/status"),
+
+  discover: () =>
+    api().post<DiscoveryEnvelope<{ run_id: string; task_id: string; status: string; queries: string[] }>>(
+      "/content/discover"
+    ),
+
+  getRun: (runId: string) =>
+    api().get<DiscoveryEnvelope<DiscoveryRun>>(`/content/discover/runs/${runId}`),
+};
+
 // ── Health API ────────────────────────────────────────────────────────────────
 export const healthAPI = {
   check: () => api().get<APIResponse<{ status: string }>>("/health"),

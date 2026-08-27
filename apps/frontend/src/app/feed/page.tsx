@@ -1,13 +1,105 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { feedAPI, feedbackAPI, type FeedItem } from "@/lib/api";
+import { feedAPI, feedbackAPI, contentAPI, type FeedItem } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
 import { useRouter } from "next/navigation";
-import { Bookmark, ThumbsUp, ThumbsDown, ExternalLink, Brain, Zap, Shield, Clock } from "lucide-react";
+import { Bookmark, ThumbsUp, ThumbsDown, ExternalLink, Brain, Zap, Shield, Clock, Search, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { formatDistanceToNow } from "date-fns";
+
+function useDiscoverNow(enabled: boolean) {
+  const qc = useQueryClient();
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+
+  const statusQuery = useQuery({
+    queryKey: ["discover-status"],
+    queryFn: () => contentAPI.getStatus(),
+    enabled,
+    refetchInterval: 15_000,
+  });
+  const status = statusQuery.data?.data.data;
+
+  // Pick up an already-running discovery (e.g. left over from a page reload)
+  useEffect(() => {
+    if (status?.active_run && !activeRunId) {
+      setActiveRunId(status.active_run.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.active_run?.id]);
+
+  const runQuery = useQuery({
+    queryKey: ["discover-run", activeRunId],
+    queryFn: () => contentAPI.getRun(activeRunId as string),
+    enabled: enabled && !!activeRunId,
+    refetchInterval: (query) => {
+      const s = query.state.data?.data.data?.status;
+      return s === "completed" || s === "failed" ? false : 2500;
+    },
+  });
+
+  useEffect(() => {
+    const run = runQuery.data?.data.data;
+    if (!run) return;
+    if (run.status === "completed") {
+      toast.success(
+        run.new_items_count
+          ? `Found ${run.new_items_count} new items — updating your feed`
+          : "Search complete — no new items this time"
+      );
+      qc.invalidateQueries({ queryKey: ["feed"] });
+      qc.invalidateQueries({ queryKey: ["discover-status"] });
+      setActiveRunId(null);
+    } else if (run.status === "failed") {
+      toast.error(run.error_message || "Search failed");
+      qc.invalidateQueries({ queryKey: ["discover-status"] });
+      setActiveRunId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runQuery.data?.data.data?.status]);
+
+  const discoverMutation = useMutation({
+    mutationFn: async () => {
+      const res = await contentAPI.discover();
+      if (res.data.error) throw new Error(res.data.error.message);
+      return res.data.data!;
+    },
+    onSuccess: (data) => {
+      setActiveRunId(data.run_id);
+      toast.success(
+        data.queries.length
+          ? `Searching for: ${data.queries.slice(0, 3).join(", ")}${data.queries.length > 3 ? "…" : ""}`
+          : "Search started"
+      );
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const isRunning = !!activeRunId || discoverMutation.isPending;
+  const cooldown = status?.cooldown_seconds_remaining ?? 0;
+  const quotaLeft = status?.daily.remaining ?? 1;
+
+  let label = "Discover Now";
+  let disabled = false;
+  if (isRunning) {
+    label = "Searching…";
+    disabled = true;
+  } else if (quotaLeft <= 0) {
+    label = "Daily limit reached";
+    disabled = true;
+  } else if (cooldown > 0) {
+    label = `Wait ${cooldown}s`;
+    disabled = true;
+  }
+
+  return {
+    label,
+    disabled,
+    isRunning,
+    trigger: () => discoverMutation.mutate(),
+  };
+}
 
 function ScoreBar({ value, color }: { value: number; color: string }) {
   return (
@@ -163,6 +255,8 @@ export default function FeedPage() {
     enabled: isAuthenticated,
   });
 
+  const discover = useDiscoverNow(isAuthenticated);
+
   if (!isAuthenticated) {
     router.push("/login");
     return null;
@@ -182,6 +276,19 @@ export default function FeedPage() {
             <span className="font-bold text-white">DeepFeed</span>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              onClick={discover.trigger}
+              disabled={discover.disabled}
+              title={discover.label}
+              className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {discover.isRunning ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Search className="w-3.5 h-3.5" />
+              )}
+              {discover.label}
+            </button>
             <button onClick={() => router.push("/profile")} className="btn-ghost text-xs">Profile</button>
             <button onClick={() => router.push("/agent")} className="btn-ghost text-xs">
               <Brain className="w-3.5 h-3.5 mr-1 inline" />Agent
@@ -233,11 +340,26 @@ export default function FeedPage() {
             <Brain className="w-10 h-10 text-slate-600 mx-auto mb-3" />
             <h2 className="text-white font-semibold mb-2">No recommendations yet</h2>
             <p className="text-slate-400 text-sm mb-4">
-              Add interests to your profile so DeepFeed can discover relevant content.
+              Search now to pull in content matching your interests, or add more
+              interests first for better results.
             </p>
-            <button onClick={() => router.push("/profile")} className="btn-primary text-sm">
-              Set up interests
-            </button>
+            <div className="flex items-center justify-center gap-2">
+              <button
+                onClick={discover.trigger}
+                disabled={discover.disabled}
+                className="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {discover.isRunning ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+                {discover.label}
+              </button>
+              <button onClick={() => router.push("/profile")} className="btn-ghost text-sm">
+                Set up interests
+              </button>
+            </div>
           </div>
         )}
 
