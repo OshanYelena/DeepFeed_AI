@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from infrastructure.database.models import User, UserProfile
 from infrastructure.auth.passwords import hash_password, verify_password
-from infrastructure.auth.tokens import create_access_token, create_refresh_token
+from infrastructure.auth.tokens import create_access_token, create_refresh_token, decode_token
 from application.dtos.user_dtos import RegisterRequest, LoginRequest
 from logger import get_logger
 
@@ -68,3 +68,22 @@ class AuthService:
 
         logger.info("login_success", user_id=str(user.id), trace_id=trace_id)
         return access_token, refresh_token
+
+    async def refresh(self, refresh_token: str, trace_id: str) -> str:
+        """Exchange a valid refresh token for a new access token."""
+        payload = decode_token(refresh_token)
+        if not payload or payload.get("type") != "refresh":
+            logger.warning("refresh_rejected", reason="invalid_or_wrong_type", trace_id=trace_id)
+            raise ValueError("Invalid or expired refresh token")
+
+        result = await self._db.execute(
+            select(User).where(User.id == uuid.UUID(payload["sub"]))
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            logger.warning("refresh_rejected", reason="user_not_found", trace_id=trace_id)
+            raise ValueError("Invalid or expired refresh token")
+
+        access_token = create_access_token(str(user.id), user.role)
+        logger.info("token_refreshed", user_id=str(user.id), trace_id=trace_id)
+        return access_token

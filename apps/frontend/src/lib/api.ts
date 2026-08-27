@@ -3,7 +3,7 @@
  * All browser requests go through Next.js /api/* rewrite proxy.
  * This avoids CORS issues and localhost/container confusion.
  */
-import axios, { AxiosInstance } from "axios";
+import axios, { AxiosInstance, InternalAxiosRequestConfig } from "axios";
 
 // Always use relative /api prefix — Next.js rewrites to backend:8000 internally
 const BASE_URL = "/api";
@@ -89,20 +89,48 @@ export interface ReflectionReport {
 
 // ── Client Factory ─────────────────────────────────────────────────────────────
 let _accessToken: string | null = null;
+// Set once by the auth store, so this module doesn't need to import it back
+// (that would be circular — the store already imports setAccessToken etc.
+// from here). Called on a 401 to try to silently get a new access token
+// before giving up and forcing a real re-login.
+let _refreshHandler: (() => Promise<string | null>) | null = null;
 
 export function setAccessToken(token: string) { _accessToken = token; }
 export function clearAccessToken() { _accessToken = null; }
 export function getAccessToken() { return _accessToken; }
+export function setRefreshHandler(fn: () => Promise<string | null>) { _refreshHandler = fn; }
+
+// One shared instance (not a fresh one per call) so the interceptors below
+// only need to be registered once.
+const client: AxiosInstance = axios.create({ baseURL: BASE_URL, timeout: 30_000 });
+
+client.interceptors.request.use((config) => {
+  config.headers.set("Content-Type", "application/json");
+  if (_accessToken) config.headers.set("Authorization", `Bearer ${_accessToken}`);
+  return config;
+});
+
+client.interceptors.response.use(
+  (res) => res,
+  async (error) => {
+    const original = error.config as (InternalAxiosRequestConfig & { _retried?: boolean }) | undefined;
+    // A 15-minute access token expiring mid-session is routine, not an
+    // error — access tokens are short-lived by design (TDS §15.2). Try
+    // once, silently, before treating it as a real auth failure.
+    if (error.response?.status === 401 && original && !original._retried && _refreshHandler) {
+      original._retried = true;
+      const newToken = await _refreshHandler();
+      if (newToken) {
+        original.headers.set("Authorization", `Bearer ${newToken}`);
+        return client(original);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 function api(): AxiosInstance {
-  return axios.create({
-    baseURL: BASE_URL,
-    headers: {
-      "Content-Type": "application/json",
-      ...(_accessToken ? { Authorization: `Bearer ${_accessToken}` } : {}),
-    },
-    timeout: 30_000,
-  });
+  return client;
 }
 
 // ── Auth API ──────────────────────────────────────────────────────────────────
@@ -118,6 +146,11 @@ export const authAPI = {
     setAccessToken(tokens.access_token);
     return tokens;
   },
+
+  refresh: (refreshToken: string) =>
+    api().post<APIResponse<{ access_token: string; token_type: string }>>("/auth/refresh", {
+      refresh_token: refreshToken,
+    }),
 };
 
 // ── Profile API ───────────────────────────────────────────────────────────────
@@ -230,10 +263,21 @@ export const contentAPI = {
   getStatus: () =>
     api().get<DiscoveryEnvelope<DiscoveryStatus>>("/content/discover/status"),
 
+  // Runs discovery -> processing -> ranking synchronously on the backend
+  // (no Celery involved — see DiscoveryTriggerService's docstring for why),
+  // so this call blocks until the whole pipeline is actually done. Give it
+  // a long timeout instead of the client's normal 30s default.
   discover: () =>
-    api().post<DiscoveryEnvelope<{ run_id: string; task_id: string; status: string; queries: string[] }>>(
-      "/content/discover"
-    ),
+    api().post<
+      DiscoveryEnvelope<{
+        run_id: string;
+        task_id: string;
+        status: "completed" | "failed";
+        new_items_count: number | null;
+        error_message: string | null;
+        queries: string[];
+      }>
+    >("/content/discover", undefined, { timeout: 300_000 }),
 
   getRun: (runId: string) =>
     api().get<DiscoveryEnvelope<DiscoveryRun>>(`/content/discover/runs/${runId}`),

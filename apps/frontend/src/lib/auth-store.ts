@@ -6,10 +6,14 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { authAPI, setAccessToken, clearAccessToken } from "@/lib/api";
+import { authAPI, setAccessToken, clearAccessToken, setRefreshHandler } from "@/lib/api";
 
 interface AuthState {
   accessToken: string | null;
+  // Never sent on ordinary requests — only used to mint a new access token
+  // when one expires (15 min lifetime, TDS §15.2) without forcing a full
+  // re-login every time.
+  refreshToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
@@ -30,6 +34,7 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       accessToken: null,
+      refreshToken: null,
       isAuthenticated: false,
       isLoading: false,
       error: null,
@@ -40,7 +45,12 @@ export const useAuthStore = create<AuthState>()(
         try {
           const tokens = await authAPI.login(email, password);
           setAccessToken(tokens.access_token);
-          set({ accessToken: tokens.access_token, isAuthenticated: true, isLoading: false });
+          set({
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token,
+            isAuthenticated: true,
+            isLoading: false,
+          });
         } catch (err: any) {
           const msg = err?.response?.data?.detail?.error?.message ?? err?.message ?? "Login failed";
           set({ error: msg, isLoading: false });
@@ -62,7 +72,7 @@ export const useAuthStore = create<AuthState>()(
 
       logout: () => {
         clearAccessToken();
-        set({ accessToken: null, isAuthenticated: false, error: null });
+        set({ accessToken: null, refreshToken: null, isAuthenticated: false, error: null });
       },
 
       clearError: () => set({ error: null }),
@@ -71,7 +81,11 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: "deepfeed-auth",
-      partialize: (state) => ({ accessToken: state.accessToken, isAuthenticated: state.isAuthenticated }),
+      partialize: (state) => ({
+        accessToken: state.accessToken,
+        refreshToken: state.refreshToken,
+        isAuthenticated: state.isAuthenticated,
+      }),
       onRehydrateStorage: () => (state) => {
         if (state?.accessToken) setAccessToken(state.accessToken);
         // Fires once rehydration finishes, whether or not anything was
@@ -81,6 +95,29 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
+
+// Wired into api.ts's response interceptor: on a 401, try this once before
+// giving up. Registered here (not in api.ts) to avoid a circular import —
+// api.ts exports the primitives this store already depends on.
+setRefreshHandler(async () => {
+  const { refreshToken, logout } = useAuthStore.getState();
+  if (!refreshToken) {
+    logout();
+    return null;
+  }
+  try {
+    const res = await authAPI.refresh(refreshToken);
+    const newAccessToken = res.data.data.access_token;
+    setAccessToken(newAccessToken);
+    useAuthStore.setState({ accessToken: newAccessToken });
+    return newAccessToken;
+  } catch {
+    // Refresh token itself is invalid/expired (30-day lifetime) — this is
+    // a real re-login, not a routine expiry.
+    logout();
+    return null;
+  }
+});
 
 /**
  * Gates a protected page until the persisted token has actually been read
