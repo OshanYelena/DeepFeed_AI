@@ -5,12 +5,13 @@ import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/lib/auth-store";
 
 export default function HomePage() {
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, hasHydrated } = useAuthStore();
   const router = useRouter();
 
   useEffect(() => {
+    if (!hasHydrated) return; // don't decide until the persisted token is loaded
     router.replace(isAuthenticated ? "/feed" : "/login");
-  }, [isAuthenticated, router]);
+  }, [hasHydrated, isAuthenticated, router]);
 
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center">

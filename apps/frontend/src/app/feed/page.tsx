@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { feedAPI, feedbackAPI, contentAPI, type FeedItem } from "@/lib/api";
-import { useAuthStore } from "@/lib/auth-store";
+import { useAuthStore, useRequireAuth } from "@/lib/auth-store";
 import { useRouter } from "next/navigation";
 import { Bookmark, ThumbsUp, ThumbsDown, ExternalLink, Brain, Zap, Shield, Clock, Search, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
@@ -238,7 +238,8 @@ function FeedCard({ item }: { item: FeedItem }) {
 }
 
 export default function FeedPage() {
-  const { isAuthenticated, logout } = useAuthStore();
+  const { logout } = useAuthStore();
+  const ready = useRequireAuth();
   const router = useRouter();
   const [offset, setOffset] = useState(0);
   const [contentTypeFilter, setContentTypeFilter] = useState<string>("");
@@ -252,15 +253,12 @@ export default function FeedPage() {
         offset,
         content_type: contentTypeFilter || undefined,
       }),
-    enabled: isAuthenticated,
+    enabled: ready,
   });
 
-  const discover = useDiscoverNow(isAuthenticated);
+  const discover = useDiscoverNow(ready);
 
-  if (!isAuthenticated) {
-    router.push("/login");
-    return null;
-  }
+  if (!ready) return null;
 
   const feed = data?.data.data;
 

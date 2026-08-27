@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { profileAPI, interestsAPI, type Interest } from "@/lib/api";
-import { useAuthStore } from "@/lib/auth-store";
+import { useRequireAuth } from "@/lib/auth-store";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2, ArrowLeft, Save } from "lucide-react";
 import toast from "react-hot-toast";
@@ -43,7 +43,7 @@ function InterestCard({ interest, onDelete, onUpdate }: {
 }
 
 export default function ProfilePage() {
-  const { isAuthenticated } = useAuthStore();
+  const ready = useRequireAuth();
   const router = useRouter();
   const qc = useQueryClient();
   const [newInterest, setNewInterest] = useState({ name: "", description: "", weight: 0.7 });
@@ -52,13 +52,13 @@ export default function ProfilePage() {
   const { data: profileData } = useQuery({
     queryKey: ["profile"],
     queryFn: () => profileAPI.getProfile(),
-    enabled: isAuthenticated,
+    enabled: ready,
   });
 
   const { data: interestsData } = useQuery({
     queryKey: ["interests"],
     queryFn: () => interestsAPI.list(),
-    enabled: isAuthenticated,
+    enabled: ready,
   });
 
   const profile = profileData?.data.data;
@@ -99,7 +99,7 @@ export default function ProfilePage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["interests"] }),
   });
 
-  if (!isAuthenticated) { router.push("/login"); return null; }
+  if (!ready) return null;
 
   return (
     <div className="min-h-screen bg-surface">

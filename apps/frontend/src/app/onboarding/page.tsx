@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { interestsAPI, profileAPI } from "@/lib/api";
-import { useAuthStore } from "@/lib/auth-store";
+import { useRequireAuth } from "@/lib/auth-store";
 import { Check, ChevronRight } from "lucide-react";
 import toast from "react-hot-toast";
 
@@ -31,7 +31,7 @@ const EXPERTISE_OPTIONS = [
 ];
 
 export default function OnboardingPage() {
-  const { isAuthenticated } = useAuthStore();
+  const ready = useRequireAuth();
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -60,7 +60,7 @@ export default function OnboardingPage() {
     });
   };
 
-  if (!isAuthenticated) { router.push("/login"); return null; }
+  if (!ready) return null;
 
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center px-4">
