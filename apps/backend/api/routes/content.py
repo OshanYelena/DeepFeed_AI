@@ -6,8 +6,13 @@ continues to run automatically via Celery beat; these endpoints just
 let an authenticated user kick off a personalized discovery on demand,
 subject to per-user quota and cooldown.
 
+POST /content/discover runs the whole pipeline synchronously (see
+DiscoveryTriggerService's docstring for why) and only returns once it's
+actually done, so the response already carries the final outcome —
+there's no separate "wait for it to finish" step for callers to do.
+
 Routes:
-  POST /content/discover                   — enqueue a run, return run_id + task_id
+  POST /content/discover                   — run discovery+processing+ranking, return the outcome
   GET  /content/discover/status            — quota / next-cron / active-run / last-run
   GET  /content/discover/runs/{run_id}     — fetch a specific run by id
 """
@@ -75,6 +80,8 @@ async def trigger_discovery(
             "run_id": str(run.id),
             "task_id": run.task_id,
             "status": run.status,
+            "new_items_count": run.new_items_count,
+            "error_message": run.error_message,
             "queries": (run.search_queries or {}).get("queries", []),
         },
         trace_id,

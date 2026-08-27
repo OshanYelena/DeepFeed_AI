@@ -34,37 +34,43 @@ TRACE_ID = "manual-pipeline-script"
 MAX_PROCESSING_BATCHES = 30  # safety cap: 30 * batch_size(20) = 600 items/run
 
 
-async def run_discovery() -> int:
+async def run_discovery(
+    search_queries: Optional[List[str]] = None, trace_id: str = TRACE_ID
+) -> int:
     async with AsyncSessionLocal() as db:
         service = DiscoveryService(db)
-        new_count = await service.run_discovery(trace_id=TRACE_ID)
+        new_count = await service.run_discovery(
+            search_queries=search_queries, trace_id=trace_id
+        )
         await db.commit()
     print(f"[discovery] {new_count} new content items")
     return new_count
 
 
-async def run_processing_all() -> int:
+async def run_processing_all(
+    trace_id: str = TRACE_ID, max_batches: int = MAX_PROCESSING_BATCHES
+) -> int:
     llm = get_llm_provider("low")
     total = 0
-    for _ in range(MAX_PROCESSING_BATCHES):
+    for _ in range(max_batches):
         async with AsyncSessionLocal() as db:
             service = ContentProcessingService(db, llm)
-            count = await service.process_pending(batch_size=20, trace_id=TRACE_ID)
+            count = await service.process_pending(batch_size=20, trace_id=trace_id)
             await db.commit()
         total += count
         print(f"[processing] batch processed {count} items (running total: {total})")
         if count == 0:
             break
     else:
-        print(f"[processing] stopped after {MAX_PROCESSING_BATCHES} batches — "
+        print(f"[processing] stopped after {max_batches} batches — "
               f"there may still be unprocessed items, run again to continue")
     return total
 
 
-async def run_ranking_for_user(user_id: uuid.UUID) -> int:
+async def run_ranking_for_user(user_id: uuid.UUID, trace_id: str = TRACE_ID) -> int:
     async with AsyncSessionLocal() as db:
         engine = RankingEngine(db)
-        recs = await engine.generate_recommendations(user_id, trace_id=TRACE_ID)
+        recs = await engine.generate_recommendations(user_id, trace_id=trace_id)
         await db.commit()
     print(f"[ranking] {len(recs)} recommendations generated for user {user_id}")
     return len(recs)

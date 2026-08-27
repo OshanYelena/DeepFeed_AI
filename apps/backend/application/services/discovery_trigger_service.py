@@ -2,7 +2,16 @@
 DeepFeed AI - Discovery Trigger Service
 
 Handles the "Discover Now" button: enforces per-user quota, resolves the
-user's latest search plan, records the run, and dispatches the Celery task.
+user's latest search plan, records the run, and runs the pipeline.
+
+Runs discovery -> processing -> ranking synchronously, in-request, instead
+of dispatching to Celery. That's a deliberate trade-off, not an oversight:
+in this deployment the worker container gets restarted independently of
+the API (observed twice), and task_acks_late redelivery didn't recover the
+in-flight task either time — the DiscoveryRun row was left "running"
+forever with nothing left to ever mark it terminal. A blocking request is
+slower but fails honestly (the HTTP call itself errors out) instead of
+silently losing work. Revisit if/when the worker's uptime is solid.
 
 Separated from DiscoveryService because that service is the worker-side
 worker; this service is the API-side gatekeeper.
@@ -226,7 +235,8 @@ class DiscoveryTriggerService:
     async def trigger(
         self, user_id: uuid.UUID, trace_id: str = ""
     ) -> DiscoveryRun:
-        """Validate, record, dispatch. Returns the persisted DiscoveryRun."""
+        """Validate, record, run the pipeline synchronously, and return the
+        DiscoveryRun already in its terminal state (completed or failed)."""
 
         # Quota
         used = await self._count_runs_last_24h(user_id)
@@ -267,35 +277,58 @@ class DiscoveryTriggerService:
                     "interests on your profile first."
                 )
 
-        # Dispatch the Celery task. Import inline so the route module
-        # doesn't pull Celery at import time during tests.
-        from workers.tasks import run_personalized_discovery_task
-
-        async_result = run_personalized_discovery_task.delay(
-            user_id=str(user_id),
-            search_queries=queries,
-            trace_id=trace_id,
-        )
-
         run = DiscoveryRun(
             user_id=user_id,
-            task_id=async_result.id,
-            status="pending",
+            task_id=f"sync-{uuid.uuid4()}",
+            status="running",
             trigger_type="personalized",
             search_queries={"queries": queries},
             started_at=_now_utc(),
         )
         self._db.add(run)
-        await self._db.flush()
+        await self._db.commit()  # visible immediately in case the run below fails hard
 
         logger.info(
-            "discovery_run_dispatched",
+            "discovery_run_started",
             run_id=str(run.id),
-            task_id=async_result.id,
             user_id=str(user_id),
             query_count=len(queries),
             trace_id=trace_id,
         )
+
+        # Run inline — see module docstring for why this isn't a Celery task.
+        # Each phase uses its own fresh session (imported from run_pipeline)
+        # rather than self._db, since that's a long-lived request-scoped
+        # session and these phases can each touch hundreds of rows.
+        from run_pipeline import run_discovery, run_processing_all, run_ranking_for_user
+
+        try:
+            new_count = await run_discovery(search_queries=queries, trace_id=trace_id)
+            await run_processing_all(trace_id=trace_id, max_batches=5)
+            rec_count = await run_ranking_for_user(user_id, trace_id=trace_id)
+            run.status = "completed"
+            run.new_items_count = new_count
+            run.completed_at = _now_utc()
+            await self._db.commit()
+            logger.info(
+                "discovery_run_completed",
+                run_id=str(run.id),
+                new_items=new_count,
+                recommendations=rec_count,
+                trace_id=trace_id,
+            )
+        except Exception as exc:
+            run.status = "failed"
+            run.error_message = str(exc)
+            run.completed_at = _now_utc()
+            await self._db.commit()
+            logger.error(
+                "discovery_run_failed",
+                run_id=str(run.id),
+                error=str(exc),
+                trace_id=trace_id,
+            )
+
         return run
 
     async def get_run(

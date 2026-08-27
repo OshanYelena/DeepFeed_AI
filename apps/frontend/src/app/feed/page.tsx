@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { feedAPI, feedbackAPI, contentAPI, type FeedItem } from "@/lib/api";
 import { useAuthStore, useRequireAuth } from "@/lib/auth-store";
@@ -11,8 +11,9 @@ import { formatDistanceToNow } from "date-fns";
 
 function useDiscoverNow(enabled: boolean) {
   const qc = useQueryClient();
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
+  // Powers the quota/cooldown display and disables the button appropriately.
+  // Discovery itself no longer needs polling here — see the mutation below.
   const statusQuery = useQuery({
     queryKey: ["discover-status"],
     queryFn: () => contentAPI.getStatus(),
@@ -21,62 +22,32 @@ function useDiscoverNow(enabled: boolean) {
   });
   const status = statusQuery.data?.data.data;
 
-  // Pick up an already-running discovery (e.g. left over from a page reload)
-  useEffect(() => {
-    if (status?.active_run && !activeRunId) {
-      setActiveRunId(status.active_run.id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status?.active_run?.id]);
-
-  const runQuery = useQuery({
-    queryKey: ["discover-run", activeRunId],
-    queryFn: () => contentAPI.getRun(activeRunId as string),
-    enabled: enabled && !!activeRunId,
-    refetchInterval: (query) => {
-      const s = query.state.data?.data.data?.status;
-      return s === "completed" || s === "failed" ? false : 2500;
-    },
-  });
-
-  useEffect(() => {
-    const run = runQuery.data?.data.data;
-    if (!run) return;
-    if (run.status === "completed") {
-      toast.success(
-        run.new_items_count
-          ? `Found ${run.new_items_count} new items — updating your feed`
-          : "Search complete — no new items this time"
-      );
-      qc.invalidateQueries({ queryKey: ["feed"] });
-      qc.invalidateQueries({ queryKey: ["discover-status"] });
-      setActiveRunId(null);
-    } else if (run.status === "failed") {
-      toast.error(run.error_message || "Search failed");
-      qc.invalidateQueries({ queryKey: ["discover-status"] });
-      setActiveRunId(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runQuery.data?.data.data?.status]);
-
   const discoverMutation = useMutation({
+    // Runs synchronously on the backend (no Celery worker involved — see
+    // DiscoveryTriggerService's docstring), so this resolves only once the
+    // whole discovery -> processing -> ranking chain has actually finished.
     mutationFn: async () => {
       const res = await contentAPI.discover();
       if (res.data.error) throw new Error(res.data.error.message);
       return res.data.data!;
     },
     onSuccess: (data) => {
-      setActiveRunId(data.run_id);
-      toast.success(
-        data.queries.length
-          ? `Searching for: ${data.queries.slice(0, 3).join(", ")}${data.queries.length > 3 ? "…" : ""}`
-          : "Search started"
-      );
+      if (data.status === "completed") {
+        toast.success(
+          data.new_items_count
+            ? `Found ${data.new_items_count} new items — updating your feed`
+            : "Search complete — no new items this time"
+        );
+      } else {
+        toast.error(data.error_message || "Search failed");
+      }
+      qc.invalidateQueries({ queryKey: ["feed"] });
+      qc.invalidateQueries({ queryKey: ["discover-status"] });
     },
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const isRunning = !!activeRunId || discoverMutation.isPending;
+  const isRunning = discoverMutation.isPending;
   const cooldown = status?.cooldown_seconds_remaining ?? 0;
   const quotaLeft = status?.daily.remaining ?? 1;
 
