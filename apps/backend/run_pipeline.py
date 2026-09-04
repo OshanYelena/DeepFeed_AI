@@ -58,9 +58,9 @@ async def run_processing_all(
             count = await service.process_pending(batch_size=20, trace_id=trace_id)
             await db.commit()
         total += count
-        print(f"[processing] batch processed {count} items (running total: {total})")
+        print(f"[processing] batch attempted {count} items (running total: {total})")
         if count == 0:
-            break
+            break  # nothing left in 'discovered' — not "this batch failed"
     else:
         print(f"[processing] stopped after {max_batches} batches — "
               f"there may still be unprocessed items, run again to continue")

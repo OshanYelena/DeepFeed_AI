@@ -232,7 +232,19 @@ class ContentProcessingService:
             return False
 
     async def process_pending(self, batch_size: int = 20, trace_id: str = "") -> int:
-        """Process a batch of discovered but unprocessed content items."""
+        """Process a batch of discovered but unprocessed content items.
+
+        Returns the number of items *attempted* (i.e. how many were still
+        'discovered'), not how many succeeded. Callers that loop batches
+        until the backlog is drained (run_pipeline.py's run_processing_all)
+        rely on this to know when to stop — a batch that fetched 20 items
+        and failed all 20 is not the same as a batch that fetched 0 items
+        because there was nothing left. Returning success_count here used
+        to conflate those two cases: an unlucky batch where every item
+        failed extraction (e.g. a handful of unreachable sources) made the
+        caller believe the queue was empty and stop early, leaving the
+        rest of the backlog stuck at 'discovered' indefinitely.
+        """
         result = await self._db.execute(
             select(ContentItem)
             .where(ContentItem.status == "discovered")
@@ -246,4 +258,10 @@ class ContentProcessingService:
             if ok:
                 success_count += 1
 
-        return success_count
+        logger.info(
+            "process_pending_batch_done",
+            attempted=len(items),
+            succeeded=success_count,
+            trace_id=trace_id,
+        )
+        return len(items)
