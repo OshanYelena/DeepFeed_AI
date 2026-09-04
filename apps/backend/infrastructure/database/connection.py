@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.pool import NullPool
 from sqlalchemy import text
 import uuid
 from datetime import datetime, timezone
@@ -18,12 +19,26 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 # ── Engine ────────────────────────────────────────────────────────────────────
+# Test runs create a fresh event loop per test (pytest-asyncio), but this
+# engine is a module-level singleton imported once for the whole session.
+# A sized pool hands out connections that were checked out under a now-
+# closed loop, which asyncpg's cancel-on-close path then fails on with
+# "attached to a different loop" — surfaces specifically through Starlette's
+# BaseHTTPMiddleware (used by TraceIDMiddleware/RateLimitMiddleware/
+# AuditMiddleware), which runs the app in its own anyio TaskGroup. NullPool
+# sidesteps it by never reusing a connection across checkouts; production
+# keeps the real sized pool.
+_pool_kwargs = (
+    {"poolclass": NullPool}
+    if settings.app_env == "test"
+    else {"pool_size": settings.database_pool_size, "max_overflow": settings.database_max_overflow}
+)
+
 engine = create_async_engine(
     settings.database_url,
     echo=settings.app_debug,
-    pool_size=settings.database_pool_size,
-    max_overflow=settings.database_max_overflow,
     pool_pre_ping=True,
+    **_pool_kwargs,
 )
 
 # ── Session Factory ───────────────────────────────────────────────────────────

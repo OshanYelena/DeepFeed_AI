@@ -219,7 +219,8 @@ Respond in JSON format:
 }}"""
         response = await self._llm.generate(prompt, max_tokens=600)
 
-        import json, re
+        import json
+        import re
         match = re.search(r'\{.*\}', response.content, re.DOTALL)
         if match:
             data = json.loads(match.group())

@@ -34,7 +34,7 @@ class SourceService:
     async def list_sources(self, active_only: bool = True) -> List[Source]:
         stmt = select(Source)
         if active_only:
-            stmt = stmt.where(Source.is_active == True)
+            stmt = stmt.where(Source.is_active.is_(True))
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
 
@@ -86,7 +86,7 @@ class DiscoveryService:
         Run discovery for all active sources (or a specific one).
         Returns number of new ContentItems created.
         """
-        stmt = select(Source).where(Source.is_active == True)
+        stmt = select(Source).where(Source.is_active.is_(True))
         if source_id:
             stmt = stmt.where(Source.id == source_id)
 

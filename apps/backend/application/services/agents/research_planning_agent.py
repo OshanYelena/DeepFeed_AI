@@ -112,7 +112,8 @@ Generate 8-12 specific, targeted search queries. Return as JSON array: ["query 1
 Focus on technical depth and recent developments."""
 
             response = await self._llm.generate(prompt, max_tokens=300)
-            import json, re
+            import json
+            import re
             match = re.search(r'\[.*?\]', response.content, re.DOTALL)
             if match:
                 queries = json.loads(match.group())

@@ -13,11 +13,6 @@ from httpx import AsyncClient, ASGITransport
 
 
 @pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture
 async def client():
     from main import app
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -30,7 +25,6 @@ TEST_USER_PASSWORD = "E2ETestPassword123!"
 
 # ── Scenario 1: Full Registration Flow ────────────────────────────────────────
 
-@pytest.mark.anyio
 class TestRegistrationJourney:
     """TDS §18.4: User Registration scenario."""
 
@@ -75,7 +69,6 @@ class TestRegistrationJourney:
 
 # ── Scenario 2: Authentication Flow ──────────────────────────────────────────
 
-@pytest.mark.anyio
 class TestAuthenticationJourney:
     """TDS §18.4: Authentication scenario."""
 
@@ -106,7 +99,6 @@ class TestAuthenticationJourney:
 
 # ── Scenario 3: Interest Management ──────────────────────────────────────────
 
-@pytest.mark.anyio
 class TestInterestManagementJourney:
     """TDS §18.4: Interest Creation scenario."""
 
@@ -136,7 +128,6 @@ class TestInterestManagementJourney:
 
 # ── Scenario 4: Feed Pipeline ─────────────────────────────────────────────────
 
-@pytest.mark.anyio
 class TestFeedPipelineJourney:
     """TDS §18.4: Discovery → Recommendation → Feed scenario."""
 
@@ -168,7 +159,6 @@ class TestFeedPipelineJourney:
 
 # ── Scenario 5: Feedback Learning ────────────────────────────────────────────
 
-@pytest.mark.anyio
 class TestFeedbackLearningJourney:
     """TDS §18.4: Feedback Learning scenario."""
 
@@ -194,7 +184,6 @@ class TestFeedbackLearningJourney:
 
 # ── Scenario 6: Adaptation Cycle ─────────────────────────────────────────────
 
-@pytest.mark.anyio
 class TestAdaptationCycleJourney:
     """TDS §18.4: Adaptation Cycle scenario."""
 
@@ -221,7 +210,6 @@ class TestAdaptationCycleJourney:
 
 # ── Scenario 7: Admin Operations ─────────────────────────────────────────────
 
-@pytest.mark.anyio
 class TestAdminOperationsJourney:
     """TDS §18.4: Admin operations scenario."""
 
@@ -246,7 +234,6 @@ class TestAdminOperationsJourney:
 
 # ── Scenario 8: Observability ─────────────────────────────────────────────────
 
-@pytest.mark.anyio
 class TestObservabilityJourney:
     """TDS §18.4: Observability scenario."""
 

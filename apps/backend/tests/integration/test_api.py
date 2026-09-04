@@ -8,11 +8,6 @@ from httpx import AsyncClient, ASGITransport
 
 
 @pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
-@pytest.fixture
 async def client():
     """Test HTTP client with ASGITransport."""
     from main import app
@@ -20,7 +15,6 @@ async def client():
         yield c
 
 
-@pytest.mark.anyio
 class TestHealthEndpoints:
     async def test_health_returns_200(self, client):
         resp = await client.get("/health")
@@ -44,7 +38,6 @@ class TestHealthEndpoints:
         assert resp.headers.get("X-Trace-ID") == custom_trace
 
 
-@pytest.mark.anyio
 class TestAuthEndpoints:
     async def test_register_returns_201(self, client):
         resp = await client.post("/auth/register", json={
@@ -78,7 +71,6 @@ class TestAuthEndpoints:
         assert resp.status_code in (401, 500)
 
 
-@pytest.mark.anyio
 class TestProtectedEndpoints:
     async def test_feed_requires_auth(self, client):
         resp = await client.get("/feed")
@@ -97,7 +89,6 @@ class TestProtectedEndpoints:
         assert resp.status_code == 403
 
 
-@pytest.mark.anyio
 class TestResponseFormat:
     async def test_health_response_has_correct_structure(self, client):
         resp = await client.get("/health")

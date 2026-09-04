@@ -61,10 +61,26 @@ jobs:
       - name: Run linter (ruff)
         working-directory: apps/backend
         run: |
-          pip install ruff
+          pip install ruff==0.12.0
           ruff check . --ignore=E501,F401
 
-      - name: Run unit tests
+      - name: Run migrations against the test database
+        working-directory: apps/backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://deepfeed:deepfeed@localhost:5432/deepfeed_test
+          DATABASE_SYNC_URL: postgresql://deepfeed:deepfeed@localhost:5432/deepfeed_test
+          APP_ENV: test
+        run: |
+          alembic upgrade head
+
+      # Unit/integration/e2e run as one pytest invocation, not three separate
+      # ones — coverage.xml (and pytest.ini's --cov-fail-under gate) needs to
+      # see the whole suite at once. Splitting them made every individual
+      # step's coverage % reflect only that slice of the codebase, so the
+      # 70%-of-everything gate could never pass no matter how good the code
+      # was — and the codecov upload below was silently only ever reporting
+      # e2e's coverage (each step's --cov-report=xml overwrote the last).
+      - name: Run tests
         working-directory: apps/backend
         env:
           DATABASE_URL: postgresql+asyncpg://deepfeed:deepfeed@localhost:5432/deepfeed_test
@@ -74,25 +90,7 @@ jobs:
           APP_ENV: test
           APP_DEBUG: "false"
         run: |
-          pytest tests/unit/ -v --tb=short --cov=. --cov-report=xml --cov-report=term-missing -x
-
-      - name: Run integration tests
-        working-directory: apps/backend
-        env:
-          DATABASE_URL: postgresql+asyncpg://deepfeed:deepfeed@localhost:5432/deepfeed_test
-          JWT_SECRET_KEY: test-secret-key-minimum-32-chars-long
-          APP_ENV: test
-        run: |
-          pytest tests/integration/ -v --tb=short -x
-
-      - name: Run E2E tests
-        working-directory: apps/backend
-        env:
-          DATABASE_URL: postgresql+asyncpg://deepfeed:deepfeed@localhost:5432/deepfeed_test
-          JWT_SECRET_KEY: test-secret-key-minimum-32-chars-long
-          APP_ENV: test
-        run: |
-          pytest tests/e2e/ -v --tb=short
+          pytest tests/unit tests/integration tests/e2e -v --tb=short --cov=. --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage report
         uses: codecov/codecov-action@v4

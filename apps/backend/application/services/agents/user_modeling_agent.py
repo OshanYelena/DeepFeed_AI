@@ -111,7 +111,6 @@ class UserModelingAgent:
             new_confidence = min(1.0, (count / 20.0) * 0.5 + 0.5)  # Grows with more signals
 
             if pref:
-                old = pref.weight
                 pref.weight = new_weight
                 pref.confidence = new_confidence
                 pref.source = "behavioral"
