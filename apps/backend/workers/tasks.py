@@ -7,7 +7,7 @@ Idempotent by design (TDS §9.7).
 import asyncio
 import uuid
 from celery import shared_task
-from celery.exceptions import MaxRetriesExceededError
+from celery.exceptions import MaxRetriesExceededError, SoftTimeLimitExceeded
 
 from workers.celery_app import celery_app
 from logger import get_logger
@@ -61,6 +61,169 @@ def run_discovery_task(self, source_id: str = None, trace_id: str = None):
         try:
             raise self.retry(exc=exc, countdown=60 * (self.request.retries + 1))
         except MaxRetriesExceededError:
+            return {"status": "failed", "error": str(exc)}
+
+
+# ── Personalized Discovery Task ───────────────────────────────────────────────
+# Triggered by the "Discover Now" button. Reads the user's latest SearchPlan
+# queries (passed in by the API layer) and feeds them to DiscoveryService so
+# providers like RSS/arXiv that accept query input return user-relevant
+# candidates instead of their default firehose.
+#
+# This task also updates the DiscoveryRun row so the UI can observe progress.
+
+@celery_app.task(
+    name="workers.tasks.run_personalized_discovery_task",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    # Discovery + processing (real HTTP fetches per item) + ranking chained
+    # into one task has no natural upper bound — a large backlog or a run
+    # of slow/hanging feeds can otherwise leave this "running" forever from
+    # the UI's point of view. Soft limit lets us mark the run failed
+    # cleanly; hard limit is the backstop if that handler itself hangs.
+    soft_time_limit=360,
+    time_limit=420,
+)
+def run_personalized_discovery_task(
+    self,
+    user_id: str,
+    search_queries: list = None,
+    trace_id: str = None,
+):
+    """Manual, personalized discovery triggered by an authenticated user."""
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+
+    trace_id = trace_id or str(uuid.uuid4())
+    task_id = self.request.id
+    user_uuid = uuid.UUID(user_id)
+    queries = list(search_queries or [])
+
+    logger.info(
+        "personalized_discovery_start",
+        task_id=task_id,
+        user_id=user_id,
+        query_count=len(queries),
+        trace_id=trace_id,
+    )
+
+    async def _mark_running():
+        # Flip status from 'pending' → 'running' so the UI can show the
+        # right phase. Best-effort: if the row isn't there yet (race with
+        # the API commit) we'll just no-op.
+        from infrastructure.database.models import DiscoveryRun
+        async with await _get_db_session() as db:
+            row = (await db.execute(
+                select(DiscoveryRun).where(DiscoveryRun.task_id == task_id)
+            )).scalar_one_or_none()
+            if row is not None:
+                row.status = "running"
+                await db.commit()
+
+    async def _run_discovery():
+        from application.services.discovery_service import DiscoveryService
+        async with await _get_db_session() as db:
+            service = DiscoveryService(db)
+            new_count = await service.run_discovery(
+                search_queries=queries or None,
+                trace_id=trace_id,
+            )
+            await db.commit()
+            return new_count
+
+    async def _run_processing():
+        # Discovery only creates ContentItem rows with status='discovered' —
+        # they're not visible in anyone's feed until extracted + classified.
+        # Loop batches here so a single "Discover Now" click can actually
+        # finish the pipeline instead of waiting on the 30-minute beat cycle.
+        from application.services.content_service import ContentProcessingService
+        from infrastructure.llm.providers import get_llm_provider
+        llm = get_llm_provider("low")
+        total = 0
+        for _ in range(5):  # cap: 5 * batch_size(20) = 100 items per run, to
+                             # stay well under the task's soft_time_limit
+            async with await _get_db_session() as db:
+                service = ContentProcessingService(db, llm)
+                count = await service.process_pending(batch_size=20, trace_id=trace_id)
+                await db.commit()
+            total += count
+            if count == 0:
+                break
+        return total
+
+    async def _run_ranking():
+        from application.services.ranking_service import RankingEngine
+        async with await _get_db_session() as db:
+            engine = RankingEngine(db)
+            recs = await engine.generate_recommendations(user_uuid, trace_id=trace_id)
+            await db.commit()
+            return len(recs)
+
+    async def _mark_terminal(status: str, new_count: int = None, error: str = None):
+        from infrastructure.database.models import DiscoveryRun
+        async with await _get_db_session() as db:
+            row = (await db.execute(
+                select(DiscoveryRun).where(DiscoveryRun.task_id == task_id)
+            )).scalar_one_or_none()
+            if row is not None:
+                row.status = status
+                row.new_items_count = new_count
+                row.error_message = error
+                row.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+
+    try:
+        _run_async(_mark_running())
+        new_count = _run_async(_run_discovery())
+        processed_count = _run_async(_run_processing())
+        rec_count = _run_async(_run_ranking())
+        _run_async(_mark_terminal("completed", new_count=new_count))
+        logger.info(
+            "personalized_discovery_complete",
+            task_id=task_id,
+            user_id=user_id,
+            new_items=new_count,
+            processed_items=processed_count,
+            recommendations=rec_count,
+            trace_id=trace_id,
+        )
+        return {
+            "status": "completed",
+            "new_items": new_count,
+            "processed_items": processed_count,
+            "recommendations": rec_count,
+        }
+    except SoftTimeLimitExceeded:
+        # Don't retry a timeout — that just repeats the same slow work and
+        # hits the limit again. Mark it failed immediately so the run row
+        # (and the frontend polling it) doesn't sit at "running" forever.
+        logger.error(
+            "personalized_discovery_timed_out",
+            task_id=task_id,
+            user_id=user_id,
+            trace_id=trace_id,
+        )
+        _run_async(_mark_terminal(
+            "failed",
+            error="Search took too long and was stopped. Try again — "
+                  "processing works through a queue, so a retry picks up "
+                  "less backlog.",
+        ))
+        return {"status": "failed", "error": "timed_out"}
+    except Exception as exc:
+        logger.error(
+            "personalized_discovery_failed",
+            task_id=task_id,
+            user_id=user_id,
+            error=str(exc),
+            trace_id=trace_id,
+        )
+        try:
+            raise self.retry(exc=exc, countdown=60 * (self.request.retries + 1))
+        except MaxRetriesExceededError:
+            # Final failure — record it on the run row before returning.
+            _run_async(_mark_terminal("failed", error=str(exc)))
             return {"status": "failed", "error": str(exc)}
 
 

@@ -2,7 +2,7 @@
 
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { agentAPI, type AdaptationEvent } from "@/lib/api";
-import { useAuthStore } from "@/lib/auth-store";
+import { useRequireAuth } from "@/lib/auth-store";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Brain, Sparkles, RefreshCw, Target, Activity, AlertCircle, CheckCircle } from "lucide-react";
 import toast from "react-hot-toast";
@@ -34,31 +34,31 @@ function AgentEventRow({ event }: { event: AdaptationEvent }) {
 }
 
 export default function AgentPage() {
-  const { isAuthenticated } = useAuthStore();
+  const ready = useRequireAuth();
   const router = useRouter();
 
   const { data: insightsData, isLoading: insightsLoading } = useQuery({
     queryKey: ["agent-insights"],
     queryFn: () => agentAPI.getProfileInsights(),
-    enabled: isAuthenticated,
+    enabled: ready,
   });
 
   const { data: topicsData } = useQuery({
     queryKey: ["agent-topics"],
     queryFn: () => agentAPI.getTopicPreferences(),
-    enabled: isAuthenticated,
+    enabled: ready,
   });
 
   const { data: eventsData } = useQuery({
     queryKey: ["agent-events"],
     queryFn: () => agentAPI.getAdaptationEvents(),
-    enabled: isAuthenticated,
+    enabled: ready,
   });
 
   const { data: reflectionData } = useQuery({
     queryKey: ["agent-reflection"],
     queryFn: () => agentAPI.getLatestReflection(),
-    enabled: isAuthenticated,
+    enabled: ready,
     retry: false,
   });
 
@@ -85,7 +85,7 @@ export default function AgentPage() {
   const events = eventsData?.data.data?.events ?? [];
   const reflection = reflectionData?.data.data;
 
-  if (!isAuthenticated) { router.push("/login"); return null; }
+  if (!ready) return null;
 
   return (
     <div className="min-h-screen bg-surface">

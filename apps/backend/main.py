@@ -17,6 +17,7 @@ from api.routes.users import profile_router, interests_router
 from api.routes.feed import router as feed_router
 from api.routes.admin import feedback_router, admin_router
 from api.routes.agent import router as agent_router
+from api.routes.content import router as content_router
 from api.routes.stats import router as stats_router
 from infrastructure.observability.metrics import router as metrics_router
 
@@ -60,6 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(feedback_router)
     app.include_router(admin_router)
     app.include_router(agent_router)
+    app.include_router(content_router)
     app.include_router(stats_router)
 
     # ── Global Error Handler ──────────────────────────────────────────────────

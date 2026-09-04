@@ -11,6 +11,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+# uvicorn's app-loading inserts CWD into sys.path, but Celery's prefork
+# workers don't reliably inherit that — task bodies doing `from application...`
+# fail with ModuleNotFoundError inside forked workers without this.
+ENV PYTHONPATH=/app
 
 # Install Python dependencies
 COPY requirements.txt .

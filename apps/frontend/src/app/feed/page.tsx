@@ -2,12 +2,75 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { feedAPI, feedbackAPI, type FeedItem } from "@/lib/api";
-import { useAuthStore } from "@/lib/auth-store";
+import { feedAPI, feedbackAPI, contentAPI, type FeedItem } from "@/lib/api";
+import { useAuthStore, useRequireAuth } from "@/lib/auth-store";
 import { useRouter } from "next/navigation";
-import { Bookmark, ThumbsUp, ThumbsDown, ExternalLink, Brain, Zap, Shield, Clock } from "lucide-react";
+import { Bookmark, ThumbsUp, ThumbsDown, ExternalLink, Brain, Zap, Shield, Clock, Search, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { formatDistanceToNow } from "date-fns";
+
+function useDiscoverNow(enabled: boolean) {
+  const qc = useQueryClient();
+
+  // Powers the quota/cooldown display and disables the button appropriately.
+  // Discovery itself no longer needs polling here — see the mutation below.
+  const statusQuery = useQuery({
+    queryKey: ["discover-status"],
+    queryFn: () => contentAPI.getStatus(),
+    enabled,
+    refetchInterval: 15_000,
+  });
+  const status = statusQuery.data?.data.data;
+
+  const discoverMutation = useMutation({
+    // Runs synchronously on the backend (no Celery worker involved — see
+    // DiscoveryTriggerService's docstring), so this resolves only once the
+    // whole discovery -> processing -> ranking chain has actually finished.
+    mutationFn: async () => {
+      const res = await contentAPI.discover();
+      if (res.data.error) throw new Error(res.data.error.message);
+      return res.data.data!;
+    },
+    onSuccess: (data) => {
+      if (data.status === "completed") {
+        toast.success(
+          data.new_items_count
+            ? `Found ${data.new_items_count} new items — updating your feed`
+            : "Search complete — no new items this time"
+        );
+      } else {
+        toast.error(data.error_message || "Search failed");
+      }
+      qc.invalidateQueries({ queryKey: ["feed"] });
+      qc.invalidateQueries({ queryKey: ["discover-status"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const isRunning = discoverMutation.isPending;
+  const cooldown = status?.cooldown_seconds_remaining ?? 0;
+  const quotaLeft = status?.daily.remaining ?? 1;
+
+  let label = "Discover Now";
+  let disabled = false;
+  if (isRunning) {
+    label = "Searching…";
+    disabled = true;
+  } else if (quotaLeft <= 0) {
+    label = "Daily limit reached";
+    disabled = true;
+  } else if (cooldown > 0) {
+    label = `Wait ${cooldown}s`;
+    disabled = true;
+  }
+
+  return {
+    label,
+    disabled,
+    isRunning,
+    trigger: () => discoverMutation.mutate(),
+  };
+}
 
 function ScoreBar({ value, color }: { value: number; color: string }) {
   return (
@@ -146,7 +209,8 @@ function FeedCard({ item }: { item: FeedItem }) {
 }
 
 export default function FeedPage() {
-  const { isAuthenticated, logout } = useAuthStore();
+  const { logout } = useAuthStore();
+  const ready = useRequireAuth();
   const router = useRouter();
   const [offset, setOffset] = useState(0);
   const [contentTypeFilter, setContentTypeFilter] = useState<string>("");
@@ -160,13 +224,12 @@ export default function FeedPage() {
         offset,
         content_type: contentTypeFilter || undefined,
       }),
-    enabled: isAuthenticated,
+    enabled: ready,
   });
 
-  if (!isAuthenticated) {
-    router.push("/login");
-    return null;
-  }
+  const discover = useDiscoverNow(ready);
+
+  if (!ready) return null;
 
   const feed = data?.data.data;
 
@@ -182,6 +245,19 @@ export default function FeedPage() {
             <span className="font-bold text-white">DeepFeed</span>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              onClick={discover.trigger}
+              disabled={discover.disabled}
+              title={discover.label}
+              className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {discover.isRunning ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Search className="w-3.5 h-3.5" />
+              )}
+              {discover.label}
+            </button>
             <button onClick={() => router.push("/profile")} className="btn-ghost text-xs">Profile</button>
             <button onClick={() => router.push("/agent")} className="btn-ghost text-xs">
               <Brain className="w-3.5 h-3.5 mr-1 inline" />Agent
@@ -233,11 +309,26 @@ export default function FeedPage() {
             <Brain className="w-10 h-10 text-slate-600 mx-auto mb-3" />
             <h2 className="text-white font-semibold mb-2">No recommendations yet</h2>
             <p className="text-slate-400 text-sm mb-4">
-              Add interests to your profile so DeepFeed can discover relevant content.
+              Search now to pull in content matching your interests, or add more
+              interests first for better results.
             </p>
-            <button onClick={() => router.push("/profile")} className="btn-primary text-sm">
-              Set up interests
-            </button>
+            <div className="flex items-center justify-center gap-2">
+              <button
+                onClick={discover.trigger}
+                disabled={discover.disabled}
+                className="btn-primary text-sm flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {discover.isRunning ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+                {discover.label}
+              </button>
+              <button onClick={() => router.push("/profile")} className="btn-ghost text-sm">
+                Set up interests
+              </button>
+            </div>
           </div>
         )}
 
