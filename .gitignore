@@ -49,3 +49,7 @@ coverage/
 # Alembic
 infrastructure/database/migrations/versions/*.py
 !infrastructure/database/migrations/versions/001_initial.py
+
+# Celery beat's local schedule database — runtime state, not source, and
+# it rewrites itself every time beat runs.
+celerybeat-schedule
