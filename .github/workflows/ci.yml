@@ -157,6 +157,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # GHCR (like all Docker registries) requires lowercase repository
+      # names, but github.repository_owner preserves real casing
+      # ("OshanYelena") — buildx rejects that outright. Compute it once.
+      - name: Compute lowercase image owner
+        id: owner
+        run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
       - name: Build & push backend image
         uses: docker/build-push-action@v5
         with:
@@ -164,8 +171,8 @@ jobs:
           file: apps/backend/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/deepfeed-backend:latest
-            ghcr.io/${{ github.repository_owner }}/deepfeed-backend:${{ github.sha }}
+            ghcr.io/${{ steps.owner.outputs.lc }}/deepfeed-backend:latest
+            ghcr.io/${{ steps.owner.outputs.lc }}/deepfeed-backend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -176,8 +183,8 @@ jobs:
           file: apps/frontend/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/deepfeed-frontend:latest
-            ghcr.io/${{ github.repository_owner }}/deepfeed-frontend:${{ github.sha }}
+            ghcr.io/${{ steps.owner.outputs.lc }}/deepfeed-frontend:latest
+            ghcr.io/${{ steps.owner.outputs.lc }}/deepfeed-frontend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
