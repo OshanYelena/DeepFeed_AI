@@ -17,6 +17,9 @@ from infrastructure.database.models import (
     Recommendation, RecommendationTrace, Feedback,
     UserTopicPreference, SourcePreference, ProcessedContent,
 )
+from infrastructure.observability.metrics import (
+    recommendations_generated_total, avg_relevance_score, feed_size_gauge,
+)
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -124,6 +127,14 @@ class RankingEngine:
             recommendations.append(rec)
 
         logger.info("ranking_complete", user_id=str(user_id), count=len(recommendations), trace_id=trace_id)
+
+        if recommendations:
+            recommendations_generated_total.inc(len(recommendations))
+            avg_relevance_score.set(
+                sum(s.relevance_score for _, s in top) / len(top)
+            )
+            feed_size_gauge.set(len(recommendations))
+
         return recommendations
 
     async def _score_item(

@@ -26,13 +26,25 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # RabbitMQ metrics (if rabbitmq_prometheus plugin enabled)
+  # RabbitMQ metrics (rabbitmq_prometheus plugin — see deployment/docker/rabbitmq/enabled_plugins)
   - job_name: 'rabbitmq'
     static_configs:
       - targets: ['rabbitmq:15692']
     scrape_interval: 30s
 
-  # PostgreSQL metrics (requires postgres_exporter)
-  # - job_name: 'postgres'
-  #   static_configs:
-  #     - targets: ['postgres_exporter:9187']
+  # PostgreSQL metrics
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres_exporter:9187']
+
+  # Celery worker (prefork pool — aggregated across all child processes,
+  # see workers/worker_metrics.py)
+  - job_name: 'deepfeed_worker'
+    static_configs:
+      - targets: ['worker:9091']
+
+  # Celery beat — process-liveness signal only, it doesn't execute task
+  # bodies itself (see celery_app.py's beat_init handler)
+  - job_name: 'deepfeed_beat'
+    static_configs:
+      - targets: ['beat:9092']

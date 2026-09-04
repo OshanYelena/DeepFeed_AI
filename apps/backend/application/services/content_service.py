@@ -3,6 +3,7 @@ DeepFeed AI - Content Processing Service (M7)
 Handles HTML/PDF extraction, cleaning, and topic classification.
 Pipeline: Fetch → Extract → Clean → Classify → Store
 """
+import time
 import uuid
 import httpx
 from typing import Optional, List
@@ -12,6 +13,9 @@ from sqlalchemy import select
 from infrastructure.database.models import ContentItem, ProcessedContent, ContentTopic
 from domain.interfaces.llm_provider import LLMProvider
 from config import settings
+from infrastructure.observability.metrics import (
+    extraction_success_total, extraction_failure_total, processing_duration_seconds,
+)
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -179,6 +183,7 @@ class ContentProcessingService:
             return False
 
         logger.info("content_processing_start", content_item_id=str(content_item_id), url=item.url, trace_id=trace_id)
+        started_at = time.monotonic()
 
         try:
             # Step 1: Extract
@@ -224,11 +229,15 @@ class ContentProcessingService:
                 topics=len(topics_data),
                 trace_id=trace_id,
             )
+            extraction_success_total.inc()
+            processing_duration_seconds.observe(time.monotonic() - started_at)
             return True
 
         except Exception as e:
             item.status = "failed"
             logger.error("content_processing_failed", content_item_id=str(content_item_id), error=str(e), trace_id=trace_id)
+            extraction_failure_total.inc()
+            processing_duration_seconds.observe(time.monotonic() - started_at)
             return False
 
     async def process_pending(self, batch_size: int = 20, trace_id: str = "") -> int:

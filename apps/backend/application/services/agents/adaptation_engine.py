@@ -17,6 +17,7 @@ from infrastructure.database.models import (
 from domain.interfaces.llm_provider import LLMProvider
 from application.services.agents.user_modeling_agent import UserModelingAgent
 from application.services.agents.research_planning_agent import ResearchPlanningAgent
+from infrastructure.observability.metrics import adaptation_events_total, reflection_runs_total
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -72,6 +73,8 @@ class ReflectionAgent:
             confidence=0.85,
         )
         self._db.add(event)
+        adaptation_events_total.labels(agent_name=REFLECTION_AGENT).inc()
+        reflection_runs_total.inc()
         await self._db.flush()
 
         logger.info("reflection_complete", user_id=str(user_id), report_id=str(report.id), trace_id=trace_id)
@@ -220,6 +223,7 @@ class AdaptationEngine:
             confidence=0.9,
         )
         self._db.add(event)
+        adaptation_events_total.labels(agent_name=ADAPTATION_ENGINE).inc()
         await self._db.flush()
 
         logger.info("adaptation_cycle_complete", user_id=str(user_id), summary=summary, trace_id=trace_id)

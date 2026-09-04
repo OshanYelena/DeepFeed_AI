@@ -25,6 +25,18 @@ services:
     networks:
       - deepfeed_net
 
+  # ── Postgres Exporter ─────────────────────────────────────────────────────────
+  postgres_exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: deepfeed_postgres_exporter
+    environment:
+      DATA_SOURCE_NAME: postgresql://deepfeed:deepfeed@postgres:5432/deepfeed?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - deepfeed_net
+
   # ── Message Queue ────────────────────────────────────────────────────────────
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
@@ -36,8 +48,13 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"   # Management UI: http://localhost:15672
+      - "15692:15692"   # Prometheus metrics (rabbitmq_prometheus plugin)
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      # The -management image already enables rabbitmq_management via its
+      # own baked-in copy of this file — mounting ours has to list it too,
+      # or we'd silently disable the management UI while adding prometheus.
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 15s
@@ -92,6 +109,14 @@ services:
       DATABASE_URL: postgresql+asyncpg://deepfeed:deepfeed@postgres:5432/deepfeed
       DATABASE_SYNC_URL: postgresql://deepfeed:deepfeed@postgres:5432/deepfeed
       CELERY_BROKER_URL: amqp://deepfeed:deepfeed@rabbitmq:5672/
+      # Makes the Counter/Histogram objects imported from
+      # infrastructure/observability/metrics.py switch into
+      # multiprocess-safe mode automatically (prometheus_client checks
+      # this env var at metric-creation time) — needed because this
+      # service is a 4-process prefork pool. See workers/worker_metrics.py.
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
+    ports:
+      - "9091:9091"   # Prometheus metrics (aggregated across prefork children)
     depends_on:
       postgres:
         condition: service_healthy

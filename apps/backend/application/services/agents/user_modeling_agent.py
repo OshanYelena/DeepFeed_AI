@@ -14,6 +14,9 @@ from infrastructure.database.models import (
     UserInterestSignal, ContentTopic, ContentItem,
     UserTopicPreference, SourcePreference, AdaptationEvent,
 )
+from infrastructure.observability.metrics import (
+    adaptation_events_total, topic_updates_total, source_updates_total,
+)
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -135,6 +138,8 @@ class UserModelingAgent:
                 confidence=new_confidence,
             )
             self._db.add(event)
+            adaptation_events_total.labels(agent_name=AGENT_NAME).inc()
+            topic_updates_total.inc()
             updated += 1
 
         await self._db.flush()
@@ -202,6 +207,7 @@ class UserModelingAgent:
                 )
                 self._db.add(pref)
 
+            source_updates_total.inc()
             updated += 1
 
         await self._db.flush()

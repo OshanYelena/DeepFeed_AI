@@ -3,9 +3,14 @@ DeepFeed AI - LLM Provider Implementations (TDS §14.3)
 Concrete implementations for Anthropic, OpenAI, and Gemini.
 Router selects provider based on task cost tier (TDS §14.4).
 """
+import time
 from typing import Optional
 from domain.interfaces.llm_provider import LLMProvider, LLMResponse
 from config import settings
+from infrastructure.observability.metrics import (
+    llm_requests_total, llm_tokens_used_total, llm_request_duration_seconds,
+    llm_failures_total,
+)
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,9 +43,19 @@ class AnthropicProvider(LLMProvider):
         if system_prompt:
             kwargs["system"] = system_prompt
 
-        response = await client.messages.create(**kwargs)
+        llm_requests_total.labels(provider="anthropic").inc()
+        started_at = time.monotonic()
+        try:
+            response = await client.messages.create(**kwargs)
+        except Exception:
+            llm_failures_total.labels(provider="anthropic").inc()
+            raise
+        finally:
+            llm_request_duration_seconds.labels(provider="anthropic").observe(time.monotonic() - started_at)
+
         content = response.content[0].text if response.content else ""
         tokens = response.usage.input_tokens + response.usage.output_tokens
+        llm_tokens_used_total.labels(provider="anthropic").inc(tokens)
 
         logger.info("llm_request_complete", provider="anthropic", tokens=tokens)
         return LLMResponse(content=content, model=kwargs["model"], tokens_used=tokens, provider="anthropic")
@@ -68,14 +83,24 @@ class OpenAIProvider(LLMProvider):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        llm_requests_total.labels(provider="openai").inc()
+        started_at = time.monotonic()
+        try:
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except Exception:
+            llm_failures_total.labels(provider="openai").inc()
+            raise
+        finally:
+            llm_request_duration_seconds.labels(provider="openai").observe(time.monotonic() - started_at)
+
         content = response.choices[0].message.content or ""
         tokens = response.usage.total_tokens if response.usage else 0
+        llm_tokens_used_total.labels(provider="openai").inc(tokens)
 
         logger.info("llm_request_complete", provider="openai", tokens=tokens)
         return LLMResponse(content=content, model="gpt-4o-mini", tokens_used=tokens, provider="openai")

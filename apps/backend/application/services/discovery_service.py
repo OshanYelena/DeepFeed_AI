@@ -2,6 +2,7 @@
 DeepFeed AI - Discovery Application Service (M4, M5, M6)
 Manages sources and orchestrates content discovery with deduplication.
 """
+import time
 import uuid
 import hashlib
 from typing import List, Optional, Dict, Type
@@ -13,6 +14,10 @@ from infrastructure.providers.rss_provider import RSSProvider
 from infrastructure.providers.arxiv_provider import ArXivProvider
 from domain.interfaces.source_provider import SourceProvider, ContentCandidate
 from domain.events.events import ContentDiscovered
+from infrastructure.observability.metrics import (
+    discovery_jobs_total, items_discovered_total, provider_failures_total,
+    discovery_duration_seconds,
+)
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -93,6 +98,9 @@ class DiscoveryService:
         result = await self._db.execute(stmt)
         sources = list(result.scalars().all())
 
+        discovery_jobs_total.inc()
+        started_at = time.monotonic()
+
         total_new = 0
         for source in sources:
             try:
@@ -100,6 +108,11 @@ class DiscoveryService:
                 total_new += new_count
             except Exception as e:
                 logger.error("source_discovery_error", source_id=str(source.id), error=str(e), trace_id=trace_id)
+                provider_failures_total.labels(provider=source.source_type).inc()
+
+        discovery_duration_seconds.observe(time.monotonic() - started_at)
+        if total_new:
+            items_discovered_total.inc(total_new)
 
         logger.info("discovery_complete", total_new=total_new, trace_id=trace_id)
         return total_new
