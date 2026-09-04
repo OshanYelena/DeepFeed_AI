@@ -11,6 +11,7 @@ from logger import configure_logging, get_logger
 from api.middleware.trace import TraceIDMiddleware
 from api.middleware.rate_limit import RateLimitMiddleware
 from api.middleware.audit import AuditMiddleware
+from api.middleware.metrics import MetricsMiddleware
 from api.routes.health import router as health_router
 from api.routes.auth import router as auth_router
 from api.routes.users import profile_router, interests_router
@@ -35,6 +36,12 @@ def create_app() -> FastAPI:
     )
 
     # ── Middleware ────────────────────────────────────────────────────────────
+    # Starlette wraps these in reverse registration order — the last one
+    # added becomes the outermost layer and runs first on the way in (see
+    # TraceIDMiddleware's usage elsewhere in this codebase for why that
+    # matters to RateLimit/Audit). MetricsMiddleware is added last on
+    # purpose: it should see every request's final status code, including
+    # ones CORS/RateLimit/Audit reject before the route ever runs.
     app.add_middleware(AuditMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(TraceIDMiddleware)
@@ -50,6 +57,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(MetricsMiddleware)
 
     # ── Routers ───────────────────────────────────────────────────────────────
     app.include_router(health_router)

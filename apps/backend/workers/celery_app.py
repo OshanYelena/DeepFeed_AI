@@ -6,6 +6,7 @@ All long-running operations run here — never in the API layer (TDS §9.1).
 import asyncio
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_init, beat_init
 from config import settings
 from logger import configure_logging, get_logger
 
@@ -73,3 +74,28 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=3, minute=0),  # 3 AM daily
     },
 }
+
+
+# ── Metrics Exporters ─────────────────────────────────────────────────────────
+# worker_init fires once in the main worker process, before it forks its
+# prefork pool — exactly where the multiprocess-aggregating server needs to
+# start (see workers/worker_metrics.py's docstring for why this can't just
+# be a plain single-process exporter). This same module is also imported by
+# `celery -A workers.celery_app beat`, where worker_init never fires and
+# beat_init does instead, so both handlers can live here unconditionally.
+
+@worker_init.connect
+def _start_worker_metrics_server(**kwargs) -> None:
+    from workers.worker_metrics import start_worker_metrics_server
+    start_worker_metrics_server(port=9091)
+
+
+@beat_init.connect
+def _start_beat_metrics_server(**kwargs) -> None:
+    # Beat doesn't execute task bodies itself (it only dispatches), so
+    # there's no per-task business metric to report here — the default
+    # process collectors (CPU, memory, GC, process start time) that
+    # prometheus_client auto-registers are the useful signal: is beat
+    # actually alive and not stuck.
+    from prometheus_client import start_http_server
+    start_http_server(9092)

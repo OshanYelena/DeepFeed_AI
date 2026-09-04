@@ -57,6 +57,42 @@
         "expr": "histogram_quantile(0.95, rate(deepfeed_llm_request_duration_seconds_bucket[5m]))",
         "legendFormat": "p95 {{ provider }}"
       }]
+    },
+    {
+      "id": 9, "type": "stat", "title": "Worker Up",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 20 },
+      "targets": [{ "expr": "up{job=\"deepfeed_worker\"}", "legendFormat": "worker" }],
+      "fieldConfig": { "defaults": { "mappings": [
+        { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+      ] } }
+    },
+    {
+      "id": 10, "type": "stat", "title": "Beat Up",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 20 },
+      "targets": [{ "expr": "up{job=\"deepfeed_beat\"}", "legendFormat": "beat" }],
+      "fieldConfig": { "defaults": { "mappings": [
+        { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+      ] } }
+    },
+    {
+      "id": 11, "type": "stat", "title": "Postgres Active Connections",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 20 },
+      "targets": [{ "expr": "pg_stat_database_numbackends{datname=\"deepfeed\"}", "legendFormat": "connections" }]
+    },
+    {
+      "id": 12, "type": "stat", "title": "RabbitMQ Messages Ready",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 20 },
+      "targets": [{ "expr": "sum(rabbitmq_queue_messages_ready)", "legendFormat": "queued" }]
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "RabbitMQ Queue Depth by Queue",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [{ "expr": "rabbitmq_queue_messages_ready", "legendFormat": "{{ queue }}" }]
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "Postgres Connections Over Time",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [{ "expr": "pg_stat_database_numbackends{datname=\"deepfeed\"}", "legendFormat": "connections" }]
     }
   ]
 }

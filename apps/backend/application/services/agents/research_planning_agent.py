@@ -13,6 +13,7 @@ from infrastructure.database.models import (
     Interest, UserTopicPreference, SearchPlan, AdaptationEvent, UserProfile,
 )
 from domain.interfaces.llm_provider import LLMProvider
+from infrastructure.observability.metrics import adaptation_events_total
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -86,6 +87,7 @@ class ResearchPlanningAgent:
             confidence=0.8,
         )
         self._db.add(event)
+        adaptation_events_total.labels(agent_name=AGENT_NAME).inc()
         await self._db.flush()
 
         logger.info(

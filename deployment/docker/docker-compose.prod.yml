@@ -33,6 +33,18 @@ services:
     networks:
       - deepfeed_net
 
+  postgres_exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: deepfeed_postgres_exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://deepfeed:${POSTGRES_PASSWORD}@postgres:5432/deepfeed?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - deepfeed_net
+
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     container_name: deepfeed_rabbitmq
@@ -43,6 +55,8 @@ services:
       RABBITMQ_DEFAULT_VHOST: /
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      # See docker-compose.yml (dev) for why both plugins must be listed.
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 15s
@@ -91,6 +105,9 @@ services:
       CELERY_BROKER_URL: amqp://deepfeed:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       APP_ENV: production
       APP_DEBUG: "false"
+      # See docker-compose.yml (dev) / workers/worker_metrics.py for why
+      # this worker (a 4-process prefork pool) needs multiprocess mode.
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
     depends_on:
       postgres:
         condition: service_healthy
