@@ -216,4 +216,12 @@ jobs:
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d
             docker exec deepfeed_backend alembic upgrade head
+            # nginx resolves its upstream { server backend:8000; } hostnames
+            # once at startup and never re-checks. backend/frontend just got
+            # recreated above (new containers = new internal IPs), so an
+            # nginx that's been running since a previous deploy is still
+            # holding the old, now-dead IP — every request 502s until nginx
+            # itself restarts and re-resolves. Restart it on every deploy,
+            # not just when nginx's own image/config happens to change.
+            docker compose -f docker-compose.prod.yml restart nginx
             docker image prune -f
