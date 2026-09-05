@@ -8,6 +8,17 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { authAPI, setAccessToken, clearAccessToken, setRefreshHandler } from "@/lib/api";
 
+// Handles both of the backend's 422 shapes: our own error_response envelope
+// ({ detail: { error: { message } } }, e.g. "email already registered") and
+// FastAPI's default pydantic validation-error array ({ detail: [{ msg }] },
+// e.g. a password that fails the DTO's complexity check) — otherwise the
+// user just sees "Request failed with status code 422".
+function extractErrorMessage(err: any, fallback: string): string {
+  const detail = err?.response?.data?.detail;
+  if (Array.isArray(detail)) return detail.map((d) => d.msg).filter(Boolean).join("; ") || fallback;
+  return detail?.error?.message ?? err?.message ?? fallback;
+}
+
 interface AuthState {
   accessToken: string | null;
   // Never sent on ordinary requests — only used to mint a new access token
@@ -17,6 +28,11 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  // There's no `/users/me` endpoint to fetch these back from the server, so
+  // we just remember what the user typed into the login/register forms —
+  // enough to personalize the nav and settings page without fabricating data.
+  email: string | null;
+  fullName: string | null;
   // Zustand's persist middleware reads localStorage asynchronously, so on
   // every fresh page load isAuthenticated starts false and only becomes
   // true a tick later once rehydration finishes. Pages must wait for
@@ -38,6 +54,8 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       isLoading: false,
       error: null,
+      email: null,
+      fullName: null,
       hasHydrated: false,
 
       login: async (email, password) => {
@@ -50,10 +68,10 @@ export const useAuthStore = create<AuthState>()(
             refreshToken: tokens.refresh_token,
             isAuthenticated: true,
             isLoading: false,
+            email,
           });
         } catch (err: any) {
-          const msg = err?.response?.data?.detail?.error?.message ?? err?.message ?? "Login failed";
-          set({ error: msg, isLoading: false });
+          set({ error: extractErrorMessage(err, "Login failed"), isLoading: false });
           throw err;
         }
       },
@@ -62,17 +80,16 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         try {
           await authAPI.register(email, password, fullName);
-          set({ isLoading: false });
+          set({ isLoading: false, email, fullName: fullName ?? null });
         } catch (err: any) {
-          const msg = err?.response?.data?.detail?.error?.message ?? err?.message ?? "Registration failed";
-          set({ error: msg, isLoading: false });
+          set({ error: extractErrorMessage(err, "Registration failed"), isLoading: false });
           throw err;
         }
       },
 
       logout: () => {
         clearAccessToken();
-        set({ accessToken: null, refreshToken: null, isAuthenticated: false, error: null });
+        set({ accessToken: null, refreshToken: null, isAuthenticated: false, error: null, email: null, fullName: null });
       },
 
       clearError: () => set({ error: null }),
@@ -85,6 +102,8 @@ export const useAuthStore = create<AuthState>()(
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
         isAuthenticated: state.isAuthenticated,
+        email: state.email,
+        fullName: state.fullName,
       }),
       onRehydrateStorage: () => (state) => {
         if (state?.accessToken) setAccessToken(state.accessToken);

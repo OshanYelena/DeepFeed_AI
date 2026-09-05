@@ -21,6 +21,8 @@ node_modules/
 .npm/
 out/
 dist/
+.env.local
+*.tsbuildinfo
 
 # Docker
 *.dockerignore

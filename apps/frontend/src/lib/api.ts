@@ -178,12 +178,39 @@ export const interestsAPI = {
 };
 
 // ── Feed API ──────────────────────────────────────────────────────────────────
+// The detail endpoint returns a materially different shape than the feed list
+// (no source/rank_position/per-axis scores at the top level — those live
+// inside scoring_breakdown) — see FeedService.get_recommendation_detail.
+export interface FeedDetail {
+  recommendation_id: string;
+  title: string;
+  url: string;
+  author: string | null;
+  content_type: string;
+  published_at: string | null;
+  final_score: number;
+  scoring_breakdown: {
+    relevance?: number;
+    credibility?: number;
+    freshness?: number;
+    novelty?: number;
+    feedback?: number;
+    weights?: Record<string, number>;
+  };
+  summary_short: string | null;
+  summary_detailed: string | null;
+  key_takeaways: { takeaways?: string[] } | string[] | null;
+  why_recommended: string;
+  matched_interests: string[];
+  topics: Array<{ name: string; confidence: number }>;
+}
+
 export const feedAPI = {
   getFeed: (params?: { limit?: number; offset?: number; content_type?: string; min_score?: number }) =>
     api().get<APIResponse<FeedResponse>>("/feed", { params }),
 
   getDetail: (recommendationId: string) =>
-    api().get<APIResponse<FeedItem & { summary_detailed: string; key_takeaways: unknown; topics: Array<{ name: string; confidence: number }> }>>(`/feed/${recommendationId}`),
+    api().get<APIResponse<FeedDetail>>(`/feed/${recommendationId}`),
 };
 
 // ── Feedback API ──────────────────────────────────────────────────────────────
