@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from infrastructure.database.models import (
     DiscoveryRun,
+    Interest,
     SearchPlan,
 )
 from logger import get_logger
@@ -116,14 +117,7 @@ class DiscoveryTriggerService:
 
     # ── Search plan resolution ───────────────────────────────────────────────
 
-    async def _latest_search_queries(
-        self, user_id: uuid.UUID
-    ) -> List[str]:
-        """Return the most recent search plan's queries for the user.
-
-        SearchPlan.queries is a JSON dict like {"queries": ["...", "..."]}.
-        We tolerate missing or malformed payloads — the caller decides what
-        to do when the list is empty."""
+    async def _latest_search_plan(self, user_id: uuid.UUID) -> Optional[SearchPlan]:
         stmt = (
             select(SearchPlan)
             .where(SearchPlan.user_id == user_id)
@@ -131,7 +125,15 @@ class DiscoveryTriggerService:
             .limit(1)
         )
         result = await self._db.execute(stmt)
-        plan = result.scalar_one_or_none()
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    def _plan_queries(plan: Optional[SearchPlan]) -> List[str]:
+        """Extract the query list from a search plan.
+
+        SearchPlan.queries is a JSON dict like {"queries": ["...", "..."]}.
+        We tolerate missing or malformed payloads — the caller decides what
+        to do when the list is empty."""
         if plan is None:
             return []
         payload = plan.queries or {}
@@ -140,6 +142,24 @@ class DiscoveryTriggerService:
         if not queries and isinstance(payload, list):
             queries = payload
         return [q for q in queries if isinstance(q, str) and q.strip()]
+
+    async def _has_interests_added_since(self, user_id: uuid.UUID, since: datetime) -> bool:
+        """True if the user has added an interest since `since`.
+
+        generate_search_plan() builds its queries from the user's interests
+        at the moment it runs — it doesn't re-read them later. Without this
+        check, a plan generated before someone adds a new interest (or
+        finishes onboarding with none yet) gets reused by every future
+        Discover Now click forever, so the new interest is silently never
+        searched for. Weight/description edits don't need a new plan —
+        generate_search_plan only uses interest *names* — so this only
+        looks for newly created rows, not changed ones.
+        """
+        stmt = select(func.count()).select_from(Interest).where(
+            Interest.user_id == user_id, Interest.created_at > since
+        )
+        result = await self._db.execute(stmt)
+        return (result.scalar_one() or 0) > 0
 
     async def _reap_if_stale(self, run: Optional[DiscoveryRun]) -> Optional[DiscoveryRun]:
         """Flip a run stuck past STALE_RUN_THRESHOLD_SECONDS to 'failed' so
@@ -258,19 +278,24 @@ class DiscoveryTriggerService:
                 raise CooldownActiveError(seconds_remaining=int(cd - seconds_since))
 
         # Resolve queries from the user's latest search plan — auto-generate
-        # one from the user's interests if they don't have one yet, so the
-        # button works on the first click instead of dead-ending on "go
-        # generate a plan first".
-        queries = await self._latest_search_queries(user_id)
-        if not queries:
+        # one from the user's interests if they don't have one yet (so the
+        # button works on the first click), or if they've added an interest
+        # since the plan was generated (so it doesn't just search the same
+        # stale topics forever — see _has_interests_added_since).
+        existing_plan = await self._latest_search_plan(user_id)
+        queries = self._plan_queries(existing_plan)
+        stale = existing_plan is not None and await self._has_interests_added_since(
+            user_id, existing_plan.created_at
+        )
+        if not queries or stale:
             from application.services.agents.research_planning_agent import (
                 ResearchPlanningAgent,
             )
             from infrastructure.llm.providers import get_llm_provider
 
             agent = ResearchPlanningAgent(self._db, get_llm_provider("low"))
-            plan = await agent.generate_search_plan(user_id, trace_id)
-            queries = (plan.queries or {}).get("queries", [])
+            new_plan = await agent.generate_search_plan(user_id, trace_id)
+            queries = self._plan_queries(new_plan)
             if not queries:
                 raise NoSearchPlanError(
                     "Couldn't find anything to search for — add a few "
