@@ -173,13 +173,42 @@ class ContentProcessingService:
         """
         Process a single ContentItem through the full pipeline.
         Returns True if successful.
+
+        Locks the row (FOR UPDATE SKIP LOCKED) before touching it: the
+        Celery beat schedule runs run_processing_task every 30 minutes
+        independently of a user's synchronous "Discover Now" request, and
+        without this lock both can select the same 'discovered' item and
+        both try to INSERT a ProcessedContent row for it — the second
+        insert violates processed_contents' unique content_item_id
+        constraint and crashes the whole request (including the ranking
+        step after it), leaving the feed empty despite content having been
+        found. SKIP LOCKED means a concurrent caller just gets 0 rows back
+        for an already-claimed item instead of blocking or erroring.
         """
         result = await self._db.execute(
-            select(ContentItem).where(ContentItem.id == content_item_id)
+            select(ContentItem)
+            .where(ContentItem.id == content_item_id)
+            .with_for_update(skip_locked=True)
         )
         item = result.scalar_one_or_none()
         if not item:
-            logger.error("content_item_not_found", content_item_id=str(content_item_id), trace_id=trace_id)
+            logger.warning(
+                "content_item_unavailable",
+                content_item_id=str(content_item_id),
+                trace_id=trace_id,
+                reason="missing, or currently locked by a concurrent processing call",
+            )
+            return False
+
+        if item.status != "discovered":
+            # Already claimed and finished (or failed) by another concurrent
+            # call between when it was queued for processing and now.
+            logger.info(
+                "content_item_already_processed",
+                content_item_id=str(content_item_id),
+                status=item.status,
+                trace_id=trace_id,
+            )
             return False
 
         logger.info("content_processing_start", content_item_id=str(content_item_id), url=item.url, trace_id=trace_id)
@@ -254,10 +283,17 @@ class ContentProcessingService:
         caller believe the queue was empty and stop early, leaving the
         rest of the backlog stuck at 'discovered' indefinitely.
         """
+        # FOR UPDATE SKIP LOCKED claims this batch atomically: a concurrent
+        # process_pending() call (e.g. the beat-scheduled task overlapping a
+        # user's manual "Discover Now") gets a disjoint set of rows instead
+        # of racing on the same ones — see process_content_item's docstring
+        # for the crash this was causing.
         result = await self._db.execute(
             select(ContentItem)
             .where(ContentItem.status == "discovered")
+            .order_by(ContentItem.discovered_at)
             .limit(batch_size)
+            .with_for_update(skip_locked=True)
         )
         items = list(result.scalars().all())
 
