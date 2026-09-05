@@ -13,7 +13,13 @@ from logger import get_logger
 
 logger = get_logger(__name__)
 
-ARXIV_API_BASE = "http://export.arxiv.org/api/query"
+# arXiv now permanently redirects http:// to https:// (301). httpx doesn't
+# follow redirects by default, so every request here used to come back as a
+# 301 and get raise_for_status()'d into an "arxiv_query_failed" — silently
+# and permanently breaking arXiv discovery (the single highest-trust source,
+# per seed.py) for every query, for every user. Using https directly avoids
+# the redirect round-trip entirely rather than just tolerating it.
+ARXIV_API_BASE = "https://export.arxiv.org/api/query"
 ARXIV_NS = "http://www.w3.org/2005/Atom"
 ARXIV_NS2 = "http://arxiv.org/schemas/atom"
 
@@ -67,7 +73,7 @@ class ArXivProvider(SourceProvider):
             "sortOrder": "descending",
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             resp = await client.get(ARXIV_API_BASE, params=params)
             resp.raise_for_status()
 
@@ -134,7 +140,7 @@ class ArXivProvider(SourceProvider):
 
     async def health_check(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
                 r = await client.get(ARXIV_API_BASE, params={"search_query": "test", "max_results": 1})
                 return r.status_code == 200
         except Exception:
