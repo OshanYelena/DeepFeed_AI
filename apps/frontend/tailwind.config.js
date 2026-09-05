@@ -8,7 +8,8 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["var(--font-inter)", "system-ui", "sans-serif"],
+        sans: ["var(--font-manrope)", "system-ui", "sans-serif"],
+        serif: ["var(--font-literata)", "Georgia", "serif"],
         mono: ["var(--font-jetbrains)", "Menlo", "monospace"],
       },
       colors: {
@@ -20,12 +21,38 @@ module.exports = {
           700: "#0369a1",
           900: "#0c4a6e",
         },
+        // Design-system palette lifted from the DeepFeed Web App mockup.
         surface: {
-          DEFAULT: "#0f172a",
-          card: "#1e293b",
-          hover: "#334155",
+          DEFAULT: "#0a0c1a",
+          card: "#12152a",
+          panel: "#0d1020",
+          hover: "#1c2040",
           border: "#334155",
         },
+        ink: {
+          DEFAULT: "#f4f5fa",
+          muted: "#9aa0b8",
+          dim: "#8b90a8",
+          faint: "#5d6280",
+          soft: "#7c8199",
+          body: "#c3c7d9",
+          para: "#e2e4ee",
+        },
+        accent: {
+          purple: "#7c5cf6",
+          purpleSoft: "#c9bdff",
+          purpleText: "#b9a6ff",
+          pink: "#d946ef",
+          blue: "#3b82f6",
+          yellow: "#eab308",
+          green: "#10b981",
+          rose: "#fda4af",
+        },
+      },
+      backgroundImage: {
+        "brand-gradient": "linear-gradient(135deg, #d946ef, #7c5cf6)",
+        "brand-gradient-h": "linear-gradient(90deg, #3b82f6, #d946ef)",
+        "rail-gradient": "linear-gradient(180deg, #d946ef, #7c5cf6, #3b82f6)",
       },
       animation: {
         "fade-in": "fadeIn 0.3s ease-in-out",

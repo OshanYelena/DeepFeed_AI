@@ -4,57 +4,99 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { profileAPI, interestsAPI, type Interest } from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth-store";
-import { useRouter } from "next/navigation";
-import { Plus, Trash2, ArrowLeft, Save } from "lucide-react";
+import { AppShell } from "@/components/layout/AppShell";
+import { Segmented } from "@/components/Segmented";
+import { WeightSlider } from "@/components/WeightSlider";
+import { Plus, X } from "lucide-react";
 import toast from "react-hot-toast";
 
-function InterestCard({ interest, onDelete, onUpdate }: {
-  interest: Interest;
-  onDelete: (id: string) => void;
-  onUpdate: (id: string, weight: number) => void;
+const EXPERTISE_OPTIONS = ["Beginner", "Intermediate", "Advanced", "Expert"];
+const DEPTH_OPTIONS = ["Short", "Medium", "Deep"];
+const FREQUENCY_OPTIONS = ["Daily", "Weekly", "Real-time"];
+
+function EditInterestForm({
+  initial,
+  onCancel,
+  onSave,
+  saving,
+}: {
+  initial: { name: string; description: string; weight: number };
+  onCancel: () => void;
+  onSave: (v: { name: string; description: string; weight: number }) => void;
+  saving: boolean;
 }) {
+  const [name, setName] = useState(initial.name);
+  const [description, setDescription] = useState(initial.description);
+  const [weight, setWeight] = useState(initial.weight);
+
   return (
-    <div className="card p-4 flex items-center gap-3">
-      <div className="flex-1">
-        <div className="font-medium text-white text-sm">{interest.name}</div>
-        {interest.description && (
-          <div className="text-xs text-slate-500 mt-0.5 line-clamp-1">{interest.description}</div>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-slate-500">Weight</span>
+    <div className="px-4 py-3.5 rounded-xl bg-surface-card border border-accent-purple/40 flex flex-col gap-2.5">
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.6fr] gap-2.5">
         <input
-          type="range"
-          min="0" max="1" step="0.1"
-          value={interest.weight}
-          onChange={(e) => onUpdate(interest.id, parseFloat(e.target.value))}
-          className="w-20 accent-brand-500"
+          className="input text-sm"
+          placeholder="Interest name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          disabled={Boolean(initial.name)}
         />
-        <span className="text-xs text-brand-400 w-6 text-right">{interest.weight.toFixed(1)}</span>
-        <button
-          onClick={() => onDelete(interest.id)}
-          className="btn-ghost p-1.5 text-slate-500 hover:text-red-400"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        <input
+          className="input text-sm"
+          placeholder="Description (optional) — helps the agent plan searches"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
       </div>
+      <div className="flex items-center gap-3.5">
+        <span className="font-mono text-[11px] text-ink-soft shrink-0">WEIGHT {weight.toFixed(2)}</span>
+        <WeightSlider value={weight} onChange={setWeight} />
+        <button
+          onClick={() => onSave({ name, description, weight })}
+          disabled={!name.trim() || saving}
+          className="px-3 py-1.5 rounded-lg bg-brand-gradient text-white text-xs font-bold disabled:opacity-50 shrink-0"
+        >
+          Save
+        </button>
+        <button onClick={onCancel} className="text-xs text-ink-dim hover:text-ink shrink-0">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function InterestRow({ interest, editing, onEdit, onDelete }: {
+  interest: Interest;
+  editing: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const pct = `${interest.weight * 100}%`;
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_160px_40px_24px] gap-4 items-center py-[13px] border-t border-white/[0.08]">
+      <button onClick={onEdit} className="text-left min-w-0">
+        <div className={`text-[14.5px] font-semibold ${editing ? "text-accent-purpleText" : "text-ink"}`}>{interest.name}</div>
+        {interest.description && <div className="text-xs text-ink-soft mt-0.5 truncate">{interest.description}</div>}
+      </button>
+      <span className="relative h-1 rounded-full bg-surface-hover">
+        <span className="absolute inset-y-0 left-0 rounded-full bg-accent-purple" style={{ width: pct }} />
+        <span className="absolute top-1/2 w-3.5 h-3.5 rounded-full bg-white" style={{ left: pct, transform: "translate(-50%,-50%)" }} />
+      </span>
+      <span className="font-mono text-[13px] text-accent-purpleText text-right">{interest.weight.toFixed(1)}</span>
+      <button onClick={onDelete} className="text-ink-faint hover:text-red-400 text-center transition-colors">
+        <X className="w-3.5 h-3.5 mx-auto" />
+      </button>
     </div>
   );
 }
 
 export default function ProfilePage() {
   const ready = useRequireAuth();
-  const router = useRouter();
   const qc = useQueryClient();
-  const [newInterest, setNewInterest] = useState({ name: "", description: "", weight: 0.7 });
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | "new" | null>(null);
 
   const { data: profileData } = useQuery({
     queryKey: ["profile"],
     queryFn: () => profileAPI.getProfile(),
     enabled: ready,
   });
-
   const { data: interestsData } = useQuery({
     queryKey: ["interests"],
     queryFn: () => interestsAPI.list(),
@@ -65,8 +107,7 @@ export default function ProfilePage() {
   const interests = interestsData?.data.data ?? [];
 
   const updateProfile = useMutation({
-    mutationFn: (data: Parameters<typeof profileAPI.updateProfile>[0]) =>
-      profileAPI.updateProfile(data),
+    mutationFn: (data: Parameters<typeof profileAPI.updateProfile>[0]) => profileAPI.updateProfile(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["profile"] });
       toast.success("Profile updated");
@@ -74,15 +115,24 @@ export default function ProfilePage() {
   });
 
   const createInterest = useMutation({
-    mutationFn: () =>
-      interestsAPI.create(newInterest.name, newInterest.description || null, newInterest.weight),
+    mutationFn: (v: { name: string; description: string; weight: number }) =>
+      interestsAPI.create(v.name, v.description || null, v.weight),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["interests"] });
-      setNewInterest({ name: "", description: "", weight: 0.7 });
-      setShowAddForm(false);
+      setEditingId(null);
       toast.success("Interest added");
     },
     onError: () => toast.error("Failed to add interest"),
+  });
+
+  const editInterest = useMutation({
+    mutationFn: ({ id, v }: { id: string; v: { name: string; description: string; weight: number } }) =>
+      interestsAPI.update(id, { description: v.description, weight: v.weight }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["interests"] });
+      setEditingId(null);
+      toast.success("Interest updated");
+    },
   });
 
   const deleteInterest = useMutation({
@@ -93,135 +143,102 @@ export default function ProfilePage() {
     },
   });
 
-  const updateInterest = useMutation({
-    mutationFn: ({ id, weight }: { id: string; weight: number }) =>
-      interestsAPI.update(id, { weight }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["interests"] }),
-  });
-
   if (!ready) return null;
 
   return (
-    <div className="min-h-screen bg-surface">
-      <nav className="sticky top-0 z-40 bg-surface/80 backdrop-blur-sm border-b border-surface-border">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <button onClick={() => router.push("/feed")} className="btn-ghost p-2">
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <h1 className="font-semibold text-white">Profile & Interests</h1>
-        </div>
-      </nav>
-
-      <main className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-        {/* Preferences */}
-        {profile && (
-          <section className="card p-5">
-            <h2 className="font-semibold text-white mb-4">Reading Preferences</h2>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Expertise level</label>
-                <select
-                  className="input text-sm"
-                  value={profile.expertise_level}
-                  onChange={(e) => updateProfile.mutate({ expertise_level: e.target.value as any })}
-                >
-                  <option value="beginner">Beginner</option>
-                  <option value="intermediate">Intermediate</option>
-                  <option value="advanced">Advanced</option>
-                  <option value="expert">Expert</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Content depth</label>
-                <select
-                  className="input text-sm"
-                  value={profile.preferred_depth}
-                  onChange={(e) => updateProfile.mutate({ preferred_depth: e.target.value as any })}
-                >
-                  <option value="short">Short</option>
-                  <option value="medium">Medium</option>
-                  <option value="deep">Deep</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1.5">Frequency</label>
-                <select
-                  className="input text-sm"
-                  value={profile.preferred_frequency}
-                  onChange={(e) => updateProfile.mutate({ preferred_frequency: e.target.value as any })}
-                >
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="realtime">Real-time</option>
-                </select>
-              </div>
+    <AppShell>
+      <div className="px-9 pt-7 pb-14 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-10 max-w-[1180px]">
+        <div className="flex flex-col gap-[22px] min-w-0">
+          <div>
+            <h1 className="font-serif text-[30px] leading-tight text-ink m-0">Profile &amp; interests</h1>
+            <div className="mt-1.5 text-[13px] text-ink-dim">
+              Interest weights feed the ranker directly. The agent adjusts them over time; you can always override.
             </div>
-          </section>
-        )}
-
-        {/* Interests */}
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-white">Interests</h2>
-            <button onClick={() => setShowAddForm(!showAddForm)} className="btn-primary text-xs flex items-center gap-1.5">
-              <Plus className="w-3.5 h-3.5" /> Add interest
-            </button>
           </div>
 
-          {showAddForm && (
-            <div className="card p-4 mb-3 space-y-3 animate-slide-up">
-              <input
-                className="input text-sm"
-                placeholder="Interest name (e.g. AI Agents)"
-                value={newInterest.name}
-                onChange={(e) => setNewInterest((f) => ({ ...f, name: e.target.value }))}
-              />
-              <input
-                className="input text-sm"
-                placeholder="Description (optional)"
-                value={newInterest.description}
-                onChange={(e) => setNewInterest((f) => ({ ...f, description: e.target.value }))}
-              />
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-slate-400">Weight: {newInterest.weight.toFixed(1)}</span>
-                <input
-                  type="range" min="0.1" max="1.0" step="0.1"
-                  value={newInterest.weight}
-                  onChange={(e) => setNewInterest((f) => ({ ...f, weight: parseFloat(e.target.value) }))}
-                  className="flex-1 accent-brand-500"
-                />
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => createInterest.mutate()}
-                  disabled={!newInterest.name.trim() || createInterest.isPending}
-                  className="btn-primary text-xs flex items-center gap-1.5"
-                >
-                  <Save className="w-3 h-3" /> Save
-                </button>
-                <button onClick={() => setShowAddForm(false)} className="btn-ghost text-xs">Cancel</button>
-              </div>
-            </div>
+          <div className="flex items-center justify-between">
+            <div className="label-mono">Interests · {interests.length}</div>
+            {editingId !== "new" && (
+              <button
+                onClick={() => setEditingId("new")}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white text-surface text-[12.5px] font-bold"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add interest
+              </button>
+            )}
+          </div>
+
+          {editingId === "new" && (
+            <EditInterestForm
+              initial={{ name: "", description: "", weight: 0.7 }}
+              saving={createInterest.isPending}
+              onCancel={() => setEditingId(null)}
+              onSave={(v) => createInterest.mutate(v)}
+            />
           )}
 
           {interests.length === 0 ? (
             <div className="card p-6 text-center">
-              <p className="text-slate-400 text-sm">No interests yet. Add some to personalize your feed.</p>
+              <p className="text-ink-muted text-sm">No interests yet. Add some to personalize your feed.</p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {interests.map((interest) => (
-                <InterestCard
-                  key={interest.id}
-                  interest={interest}
-                  onDelete={(id) => deleteInterest.mutate(id)}
-                  onUpdate={(id, weight) => updateInterest.mutate({ id, weight })}
-                />
-              ))}
+            <div className="flex flex-col">
+              {interests.map((interest) =>
+                editingId === interest.id ? (
+                  <div key={interest.id} className="py-2">
+                    <EditInterestForm
+                      initial={{ name: interest.name, description: interest.description ?? "", weight: interest.weight }}
+                      saving={editInterest.isPending}
+                      onCancel={() => setEditingId(null)}
+                      onSave={(v) => editInterest.mutate({ id: interest.id, v })}
+                    />
+                  </div>
+                ) : (
+                  <InterestRow
+                    key={interest.id}
+                    interest={interest}
+                    editing={false}
+                    onEdit={() => setEditingId(interest.id)}
+                    onDelete={() => deleteInterest.mutate(interest.id)}
+                  />
+                )
+              )}
             </div>
           )}
-        </section>
-      </main>
-    </div>
+        </div>
+
+        {profile && (
+          <div className="flex flex-col gap-4 pt-2 lg:pt-16">
+            <div className="card px-5 py-[18px] flex flex-col gap-4">
+              <div className="label-mono">Reading preferences</div>
+              <div>
+                <div className="text-[12.5px] text-ink-muted mb-2">Expertise level</div>
+                <Segmented
+                  options={EXPERTISE_OPTIONS}
+                  value={profile.expertise_level}
+                  onChange={(v) => updateProfile.mutate({ expertise_level: v.toLowerCase() as any })}
+                />
+              </div>
+              <div>
+                <div className="text-[12.5px] text-ink-muted mb-2">Content depth</div>
+                <Segmented
+                  options={DEPTH_OPTIONS}
+                  value={profile.preferred_depth}
+                  onChange={(v) => updateProfile.mutate({ preferred_depth: v.toLowerCase() as any })}
+                />
+              </div>
+              <div>
+                <div className="text-[12.5px] text-ink-muted mb-2">Frequency</div>
+                <Segmented
+                  options={FREQUENCY_OPTIONS}
+                  value={profile.preferred_frequency === "realtime" ? "Real-time" : profile.preferred_frequency}
+                  onChange={(v) => updateProfile.mutate({ preferred_frequency: v.toLowerCase().replace("-", "") as any })}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </AppShell>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/lib/auth-store";
+import { Logo } from "@/components/Logo";
 
 export default function HomePage() {
   const { isAuthenticated, hasHydrated } = useAuthStore();
@@ -16,8 +17,8 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-surface flex items-center justify-center">
       <div className="animate-pulse-slow flex flex-col items-center gap-3">
-        <div className="w-8 h-8 rounded-full bg-brand-500" />
-        <p className="text-slate-500 text-sm">Loading DeepFeed AI...</p>
+        <Logo size={40} />
+        <p className="text-ink-faint text-sm">Loading DeepFeed AI…</p>
       </div>
     </div>
   );
